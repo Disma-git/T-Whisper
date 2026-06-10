@@ -1,0 +1,29 @@
+[package]
+name = "t-whisper"
+version = "0.1.0"
+edition = "2021"
+description = "Push-to-talk-transkribering för Windows 11 på svenska (KB-Whisper + whisper.cpp)"
+license = "MIT"
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+
+[dependencies]
+anyhow = "1"
+cpal = "0.15"
+dirs = "5"
+enigo = "0.2"
+global-hotkey = "0.6"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+tao = "0.30"
+toml = "0.8"
+tray-icon = "0.19"
+whisper-rs = "0.14"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
