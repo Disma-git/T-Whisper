@@ -160,9 +160,20 @@ fn main() -> Result<()> {
             if e.id == quit_item.id() {
                 *control_flow = ControlFlow::Exit;
             } else if e.id == open_cfg_item.id() {
-                let _ = std::process::Command::new("notepad")
-                    .arg(config::config_dir().join("config.toml"))
-                    .spawn();
+                // Absolut sökväg + lokal arbetskatalog: ärvd cwd kan ligga på
+                // en nätverksenhet som paketerade Anteckningar inte hanterar.
+                let cfg_path = config::config_dir().join("config.toml");
+                let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
+                let notepad = std::path::Path::new(&windir)
+                    .join("System32")
+                    .join("notepad.exe");
+                if let Err(err) = std::process::Command::new(notepad)
+                    .arg(&cfg_path)
+                    .current_dir(config::config_dir())
+                    .spawn()
+                {
+                    eprintln!("kunde inte öppna {}: {err}", cfg_path.display());
+                }
             } else if let Some((_, name)) = key_items.iter().find(|(item, _)| e.id == *item.id())
             {
                 match name.parse::<HotKey>() {
