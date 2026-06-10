@@ -17,6 +17,19 @@ Bygger på [whisper.cpp](https://github.com/ggml-org/whisper.cpp) och Kungliga b
   - *Öppna konfigurationsfil* — för avancerade inställningar
 - Modellen hålls laddad i (GPU-)minnet → ingen uppstartsfördröjning per yttrande
 
+## Installera (färdigt paket)
+
+Ladda ner senaste **T-Whisper-Setup-x.y.z.exe** från [Releases](https://github.com/Disma-git/T-Whisper/releases) och kör den. Installern:
+
+- kräver inga administratörsrättigheter (installeras per användare)
+- innehåller alla beroenden (CUDA- och VC++-runtime-DLL:er)
+- erbjuder autostart med Windows och skrivbordsgenväg
+- avinstalleras via Inställningar → Appar
+
+Windows SmartScreen kan varna eftersom installern inte är kodsignerad — klicka "Mer info" → "Kör ändå". Vid första start laddas modellen (~170 MB) ner automatiskt.
+
+Installern byggs från [installer/t-whisper.iss](installer/t-whisper.iss) med [Inno Setup](https://jrsoftware.org/isinfo.php); instruktioner finns i skriptets huvud.
+
 ## Bygga
 
 ### Förutsättningar
