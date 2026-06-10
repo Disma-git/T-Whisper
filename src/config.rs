@@ -15,6 +15,8 @@ pub struct Config {
     pub append_space: bool,
     /// Skriv in texten via urklipp + Ctrl+V (robust) i stället för teckenvis
     pub paste: bool,
+    /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
+    pub sounds: bool,
 }
 
 impl Default for Config {
@@ -25,6 +27,7 @@ impl Default for Config {
             language: "sv".into(),
             append_space: true,
             paste: true,
+            sounds: true,
         }
     }
 }
@@ -42,9 +45,14 @@ impl Config {
             Ok(toml::from_str(&std::fs::read_to_string(&path)?)?)
         } else {
             let cfg = Self::default();
-            std::fs::create_dir_all(config_dir())?;
-            std::fs::write(&path, toml::to_string(&cfg)?)?;
+            cfg.save()?;
             Ok(cfg)
         }
+    }
+
+    pub fn save(&self) -> Result<()> {
+        std::fs::create_dir_all(config_dir())?;
+        std::fs::write(config_dir().join("config.toml"), toml::to_string(self)?)?;
+        Ok(())
     }
 }

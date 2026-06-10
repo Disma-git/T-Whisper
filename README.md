@@ -7,9 +7,11 @@ Bygger på [whisper.cpp](https://github.com/ggml-org/whisper.cpp) och Kungliga b
 ## Funktioner
 
 - **Push-to-talk**: håll F9 (konfigurerbart), släpp för att transkribera
-- **Texten skrivs vid markören** via SendInput — fungerar i de flesta program
+- **Texten skrivs vid markören** via urklipp + Ctrl+V (gamla urklippet återställs)
 - **Helt lokalt** — modellen laddas ner en gång från Hugging Face, sedan ingen nätverkstrafik
-- **Systemfältsikon** med status: blå = redo, röd = spelar in, gul = transkriberar
+- **Systemfältsikon med mic-nivåmätare**: grön stapel följer mikrofonens ljudnivå; ringen visar status (blå = redo, röd = spelar in, gul = transkriberar)
+- **Ljudfeedback**: dovt klick när inspelningen startar, pling när knappen släpps
+- **Kontrollpanel i systemfältsmenyn**: byt inspelningsknapp (F1–F12) direkt, eller öppna konfigurationsfilen
 - Modellen hålls laddad i minnet → ingen uppstartsfördröjning per yttrande
 
 ## Bygga
@@ -32,6 +34,8 @@ hotkey = "F9"          # t.ex. "F9" eller "ctrl+shift+KeyD"
 model = "small"        # tiny | base | small | medium | large
 language = "sv"
 append_space = true    # blanksteg efter varje inskriven mening
+paste = true           # urklipp+Ctrl+V (false = teckenvis inskrivning)
+sounds = true          # ljudfeedback vid start/stopp
 ```
 
 Modellen laddas ner automatiskt till `%APPDATA%\T-Whisper\models\` vid första start (~500 MB för small).

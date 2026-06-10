@@ -1,7 +1,16 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Uppdaterar den delade toppnivån (f32 lagrad som bitar i AtomicU32) om
+/// den nya toppen är högre. Nollställs av avläsaren via swap.
+fn bump_peak(level: &AtomicU32, peak: f32) {
+    let cur = f32::from_bits(level.load(Ordering::Relaxed));
+    if peak > cur {
+        level.store(peak.to_bits(), Ordering::Relaxed);
+    }
+}
 
 /// Mikrofoninspelare. Strömmen är alltid igång men samplar buffras bara
 /// när `active` är satt — det ger noll fördröjning vid push-to-talk-start.
@@ -14,7 +23,9 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new() -> Result<Self> {
+    /// `level` matas kontinuerligt med mikrofonens toppnivå (även när
+    /// inspelning inte pågår) så att UI:t kan visa en nivåmätare.
+    pub fn new(level: Arc<AtomicU32>) -> Result<Self> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -33,12 +44,15 @@ impl Recorder {
         let active = Arc::new(AtomicBool::new(false));
         let b = buf.clone();
         let a = active.clone();
+        let lvl = level.clone();
         let err_fn = |e| eprintln!("ljudfel: {e}");
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &stream_cfg,
                 move |data: &[f32], _| {
+                    let peak = data.iter().fold(0f32, |m, s| m.max(s.abs()));
+                    bump_peak(&lvl, peak);
                     if a.load(Ordering::Relaxed) {
                         b.lock().unwrap().extend_from_slice(data);
                     }
@@ -49,6 +63,10 @@ impl Recorder {
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &stream_cfg,
                 move |data: &[i16], _| {
+                    let peak = data
+                        .iter()
+                        .fold(0f32, |m, s| m.max((*s as f32 / 32768.0).abs()));
+                    bump_peak(&lvl, peak);
                     if a.load(Ordering::Relaxed) {
                         let mut b = b.lock().unwrap();
                         b.extend(data.iter().map(|s| *s as f32 / 32768.0));
