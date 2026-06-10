@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 tao = "0.30"
 toml = "0.8"
 tray-icon = "0.19"
-whisper-rs = "0.14"
+whisper-rs = "0.16"
 
 [profile.release]
 lto = true

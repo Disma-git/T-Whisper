@@ -33,9 +33,12 @@ impl Transcriber {
         state.full(params, audio)?;
 
         let mut text = String::new();
-        let n = state.full_n_segments()?;
+        let n = state.full_n_segments();
         for i in 0..n {
-            let seg = state.full_get_segment_text(i)?;
+            let Some(segment) = state.get_segment(i) else {
+                continue;
+            };
+            let seg = segment.to_str_lossy()?.into_owned();
             let t = seg.trim();
             // Hoppa över icke-tal-artefakter som "[MUSIK]" och "(skratt)".
             if (t.starts_with('[') && t.ends_with(']'))
