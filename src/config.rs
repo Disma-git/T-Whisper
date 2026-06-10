@@ -17,6 +17,8 @@ pub struct Config {
     pub paste: bool,
     /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
     pub sounds: bool,
+    /// Volym för feedbackljuden, 0.0–1.0
+    pub sound_volume: f32,
 }
 
 impl Default for Config {
@@ -28,6 +30,7 @@ impl Default for Config {
             append_space: true,
             paste: true,
             sounds: true,
+            sound_volume: 0.5,
         }
     }
 }

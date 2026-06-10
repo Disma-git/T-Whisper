@@ -22,6 +22,13 @@ const HOTKEY_CHOICES: [&str; 12] = [
     "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
 ];
 
+const VOLUME_CHOICES: [(&str, f32); 4] =
+    [("Av", 0.0), ("Låg", 0.2), ("Mellan", 0.5), ("Hög", 1.0)];
+
+// Grundnivåer för feedbackljuden; skalas med konfigurerad volym.
+const START_SOUND_GAIN: f32 = 0.5;
+const STOP_SOUND_GAIN: f32 = 0.36;
+
 enum Cmd {
     StartRecording,
     StopAndTranscribe,
@@ -49,6 +56,10 @@ fn main() -> Result<()> {
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Cmd>();
     let mic_level: Arc<AtomicU32> = Arc::default();
+    // Delad volym (f32 som bitar) så att menyändringar slår igenom direkt.
+    let sound_volume = Arc::new(AtomicU32::new(
+        cfg.sound_volume.clamp(0.0, 1.0).to_bits(),
+    ));
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
@@ -57,7 +68,10 @@ fn main() -> Result<()> {
         let cfg = cfg.clone();
         let proxy = event_loop.create_proxy();
         let mic_level = mic_level.clone();
-        std::thread::spawn(move || controller(model_path, cfg, cmd_rx, proxy, mic_level));
+        let sound_volume = sound_volume.clone();
+        std::thread::spawn(move || {
+            controller(model_path, cfg, cmd_rx, proxy, mic_level, sound_volume)
+        });
     }
 
     // Nivåmätar-ticker: läser av (och nollställer) mikrofonens toppnivå 10 ggr/s.
@@ -83,6 +97,15 @@ fn main() -> Result<()> {
         key_items.push((item, name.to_string()));
     }
     menu.append(&hotkey_submenu)?;
+    let volume_submenu = Submenu::new("Ljudvolym", true);
+    let mut vol_items: Vec<(CheckMenuItem, f32)> = Vec::new();
+    for (name, vol) in VOLUME_CHOICES {
+        let checked = (cfg.sound_volume - vol).abs() < 0.05;
+        let item = CheckMenuItem::new(name, true, checked, None);
+        volume_submenu.append(&item)?;
+        vol_items.push((item, vol));
+    }
+    menu.append(&volume_submenu)?;
     let open_cfg_item = MenuItem::new("Öppna konfigurationsfil", true, None);
     menu.append(&open_cfg_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
@@ -201,10 +224,24 @@ fn main() -> Result<()> {
                     }
                     Err(e) => eprintln!("ogiltig tangent {name}: {e:?}"),
                 }
+            } else if let Some((_, vol)) = vol_items.iter().find(|(item, _)| e.id == *item.id()) {
+                sound_volume.store(vol.to_bits(), Ordering::Relaxed);
+                cfg.sound_volume = *vol;
+                if let Err(e) = cfg.save() {
+                    eprintln!("kunde inte spara konfigurationen: {e}");
+                }
+                // Spela ett prov så användaren hör nya nivån direkt.
+                if cfg.sounds && *vol > 0.0 {
+                    sound::play(880.0, 140, STOP_SOUND_GAIN * vol);
+                }
+                eprintln!("Ljudvolym ändrad till {vol}");
             }
             // Synka bockarna i menyn med aktuell konfiguration.
             for (item, name) in &key_items {
                 item.set_checked(*name == cfg.hotkey);
+            }
+            for (item, vol) in &vol_items {
+                item.set_checked((cfg.sound_volume - vol).abs() < 0.05);
             }
         }
     });
@@ -216,6 +253,7 @@ fn controller(
     rx: Receiver<Cmd>,
     proxy: EventLoopProxy<UserEvent>,
     mic_level: Arc<AtomicU32>,
+    sound_volume: Arc<AtomicU32>,
 ) {
     let recorder = match audio::Recorder::new(mic_level) {
         Ok(r) => r,
@@ -251,15 +289,17 @@ fn controller(
             Cmd::StartRecording if !recording => {
                 recording = true;
                 recorder.start();
-                if cfg.sounds {
-                    sound::play(300.0, 60, 0.25); // dovt klick
+                let vol = f32::from_bits(sound_volume.load(Ordering::Relaxed));
+                if cfg.sounds && vol > 0.0 {
+                    sound::play(300.0, 60, START_SOUND_GAIN * vol); // dovt klick
                 }
                 let _ = proxy.send_event(UserEvent::State(AppState::Recording));
             }
             Cmd::StopAndTranscribe if recording => {
                 recording = false;
-                if cfg.sounds {
-                    sound::play(880.0, 140, 0.18); // pling
+                let vol = f32::from_bits(sound_volume.load(Ordering::Relaxed));
+                if cfg.sounds && vol > 0.0 {
+                    sound::play(880.0, 140, STOP_SOUND_GAIN * vol); // pling
                 }
                 let _ = proxy.send_event(UserEvent::State(AppState::Working));
                 let samples = recorder.stop();

@@ -36,7 +36,10 @@ language = "sv"
 append_space = true    # blanksteg efter varje inskriven mening
 paste = true           # urklipp+Ctrl+V (false = teckenvis inskrivning)
 sounds = true          # ljudfeedback vid start/stopp
+sound_volume = 0.5     # volym för feedbackljuden, 0.0–1.0
 ```
+
+Volymen kan även ändras direkt i systemfältsmenyn under **Ljudvolym** (Av/Låg/Mellan/Hög).
 
 Modellen laddas ner automatiskt till `%APPDATA%\T-Whisper\models\` vid första start (~500 MB för small).
 
