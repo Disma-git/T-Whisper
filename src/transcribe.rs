@@ -15,10 +15,14 @@ impl Transcriber {
         })
     }
 
-    pub fn transcribe(&self, audio: &[f32]) -> Result<String> {
+    pub fn transcribe(&self, audio: &[f32], digits: bool) -> Result<String> {
         let mut state = self.ctx.create_state()?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some(&self.language));
+        if digits {
+            // Stilprompt: får modellen att föredra siffror framför talord.
+            params.set_initial_prompt("Mötet den 3 juni: 25 deltagare, klockan 14.30, 5000 kronor.");
+        }
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_special(false);
@@ -53,6 +57,11 @@ impl Transcriber {
             }
             text.push_str(t);
         }
-        Ok(text.trim().to_string())
+        let text = text.trim().to_string();
+        if digits {
+            Ok(crate::numbers::convert_sv(&text))
+        } else {
+            Ok(text)
+        }
     }
 }

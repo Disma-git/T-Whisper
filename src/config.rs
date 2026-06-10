@@ -17,6 +17,8 @@ pub struct Config {
     pub paste: bool,
     /// Skicka Shift+Enter efter varje diktering (ny rad i t.ex. Notepad)
     pub shift_enter: bool,
+    /// Skriv tal som siffror ("tjugofem" -> "25")
+    pub digits: bool,
     /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
     pub sounds: bool,
     /// Volym för feedbackljuden, 0.0–1.0
@@ -32,6 +34,7 @@ impl Default for Config {
             append_space: true,
             paste: true,
             shift_enter: false,
+            digits: false,
             sounds: true,
             sound_volume: 0.5,
         }
@@ -121,6 +124,12 @@ paste = {paste}
 #  Kan även slås av/på i systemfältsmenyn.
 shift_enter = {shift_enter}
 
+#  true = skriv tal som siffror: "tjugofem" blir 25, "femtusen"
+#  blir 5000, "etthundratjugotre" blir 123. Fristående "en"/"ett"
+#  lämnas orörda (de är oftast artiklar, inte tal).
+#  Kan även slås av/på i systemfältsmenyn.
+digits = {digits}
+
 # --------------------------------------------------------------
 #  Ljudfeedback: dovt klick när inspelningen startar, pling när
 #  knappen släpps.
@@ -136,6 +145,7 @@ sound_volume = {sound_volume}
             append_space = self.append_space,
             paste = self.paste,
             shift_enter = self.shift_enter,
+            digits = self.digits,
             sound_volume = self.sound_volume,
             sounds = self.sounds,
         )

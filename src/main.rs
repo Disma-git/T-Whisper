@@ -3,6 +3,7 @@
 mod audio;
 mod config;
 mod model;
+mod numbers;
 mod sound;
 mod transcribe;
 
@@ -65,6 +66,8 @@ fn main() -> Result<()> {
     ));
     // Delad flagga: skicka Shift+Enter efter varje diktering.
     let shift_enter = Arc::new(AtomicBool::new(cfg.shift_enter));
+    // Delad flagga: skriv tal som siffror.
+    let digits = Arc::new(AtomicBool::new(cfg.digits));
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
@@ -75,6 +78,7 @@ fn main() -> Result<()> {
         let mic_level = mic_level.clone();
         let sound_volume = sound_volume.clone();
         let shift_enter = shift_enter.clone();
+        let digits = digits.clone();
         std::thread::spawn(move || {
             controller(
                 model_path,
@@ -84,6 +88,7 @@ fn main() -> Result<()> {
                 mic_level,
                 sound_volume,
                 shift_enter,
+                digits,
             )
         });
     }
@@ -127,6 +132,8 @@ fn main() -> Result<()> {
         None,
     );
     menu.append(&shift_enter_item)?;
+    let digits_item = CheckMenuItem::new("Skriv tal som siffror", true, cfg.digits, None);
+    menu.append(&digits_item)?;
     let open_cfg_item = MenuItem::new("Öppna konfigurationsfil", true, None);
     menu.append(&open_cfg_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
@@ -234,6 +241,14 @@ fn main() -> Result<()> {
                     eprintln!("kunde inte spara konfigurationen: {e}");
                 }
                 eprintln!("Shift+Enter efter diktering: {}", cfg.shift_enter);
+            } else if e.id == digits_item.id() {
+                cfg.digits = !cfg.digits;
+                digits.store(cfg.digits, Ordering::Relaxed);
+                digits_item.set_checked(cfg.digits);
+                if let Err(e) = cfg.save() {
+                    eprintln!("kunde inte spara konfigurationen: {e}");
+                }
+                eprintln!("Skriv tal som siffror: {}", cfg.digits);
             } else if e.id == about_item.id() {
                 show_about();
             } else if e.id == github_item.id() {
@@ -302,6 +317,7 @@ fn controller(
     mic_level: Arc<AtomicU32>,
     sound_volume: Arc<AtomicU32>,
     shift_enter: Arc<AtomicBool>,
+    digits: Arc<AtomicBool>,
 ) {
     let recorder = match audio::Recorder::new(mic_level) {
         Ok(r) => r,
@@ -354,7 +370,7 @@ fn controller(
                 // Ignorera tryck kortare än ~0,25 s.
                 if samples.len() >= 4_000 {
                     let t = std::time::Instant::now();
-                    match transcriber.transcribe(&samples) {
+                    match transcriber.transcribe(&samples, digits.load(Ordering::Relaxed)) {
                         Ok(text) if !text.is_empty() => {
                             eprintln!("[{:.2} s] {text}", t.elapsed().as_secs_f32());
                             let out = if cfg.append_space {
