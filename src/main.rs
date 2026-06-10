@@ -75,7 +75,11 @@ fn main() -> Result<()> {
     );
 
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+        // Kort poll-intervall: global-hotkeys kanal väcker inte tao-loopen av
+        // sig själv, så vi tittar med jämna mellanrum (försumbar CPU-kostnad).
+        *control_flow = ControlFlow::WaitUntil(
+            std::time::Instant::now() + std::time::Duration::from_millis(30),
+        );
 
         if let Event::UserEvent(state) = &event {
             let icon = match state {
@@ -87,6 +91,7 @@ fn main() -> Result<()> {
         }
 
         while let Ok(e) = hotkey_rx.try_recv() {
+            eprintln!("hotkey-händelse: id={} state={:?}", e.id, e.state);
             if e.id == hotkey.id() {
                 match e.state {
                     HotKeyState::Pressed => {

@@ -40,9 +40,10 @@ impl Transcriber {
             };
             let seg = segment.to_str_lossy()?.into_owned();
             let t = seg.trim();
-            // Hoppa över icke-tal-artefakter som "[MUSIK]" och "(skratt)".
+            // Hoppa över icke-tal-artefakter som "[MUSIK]", "(skratt)" och "<|nospeech|>".
             if (t.starts_with('[') && t.ends_with(']'))
                 || (t.starts_with('(') && t.ends_with(')'))
+                || t.starts_with("<|")
                 || t.is_empty()
             {
                 continue;
