@@ -1,4 +1,4 @@
-# T-Whisper v0.2.2
+# T-Whisper v0.3.0
 
 [![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
@@ -87,10 +87,15 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 | Version | Datum | Nyheter |
 |---|---|---|
+| **0.3.0** | 2026-06-10 | Stort optimerings- och robusthetspaket: whisper-state återanvänds + flash attention (snabbare svar); händelsestyrd event-loop (~0 % CPU i vila); lås-fri ljudbuffert; 16 kHz väljs direkt när mikrofonen stödjer det; single-instance-skydd; felmeddelanden i dialogrutor + loggfil (%APPDATA%\T-Whisper\log.txt); mikrofonströmmen byggs om automatiskt vid enhetsbyte; trasig konfig stoppar inte starten; trayikonen visas direkt vid start; app-ikon i Utforskaren; LICENSE/NOTICE; CI på GitHub Actions |
 | **0.2.2** | 2026-06-10 | Valbart läge "Skriv tal som siffror": svenska talord konverteras till siffror (även sammansatta som "tjugofemtusen" → 25 000) och modellen styrs mot sifferskrivning |
 | **0.2.1** | 2026-06-10 | Valbar Shift+Enter efter varje diktering (flödesdiktering); självdokumenterande konfigfil med modelltabell; Inno Setup-installer med alla beroenden buntade |
 | **0.2.0** | 2026-06-10 | Textinmatning via urklipp+Ctrl+V (tappar inte längre tecken); mic-nivåmätare i systemfältsikonen; ljudfeedback med ställbar volym; kontrollpanelsmeny (inspelningsknapp F1–F12, ljudvolym); Om-ruta med version och GitHub-länk; robustare öppning av konfigfilen |
 | **0.1.0** | 2026-06-10 | Första versionen: push-to-talk med F9, KB-Whisper small på GPU (CUDA) med CPU-fallback, svensk transkribering, systemfältsikon, automatisk modellnedladdning |
+
+## Felsökning
+
+Appen loggar till `%APPDATA%\T-Whisper\log.txt` (roteras vid ~1 MB). Allvarliga fel vid start visas dessutom i en dialogruta. Startar du appen två gånger berättar den andra instansen att T-Whisper redan kör.
 
 ## Kända begränsningar
 

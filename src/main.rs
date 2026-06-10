@@ -6,11 +6,11 @@ mod model;
 mod numbers;
 mod sound;
 mod transcribe;
+mod winutil;
 
 use anyhow::{Context, Result};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -18,13 +18,13 @@ use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::TrayIconBuilder;
+use winutil::log;
 
 const HOTKEY_CHOICES: [&str; 12] = [
     "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
 ];
 
-const VOLUME_CHOICES: [(&str, f32); 4] =
-    [("Av", 0.0), ("Låg", 0.2), ("Mellan", 0.5), ("Hög", 1.0)];
+const VOLUME_CHOICES: [(&str, f32); 4] = [("Av", 0.0), ("Låg", 0.2), ("Mellan", 0.5), ("Hög", 1.0)];
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO_URL: &str = "https://github.com/Disma-git/T-Whisper";
@@ -33,6 +33,9 @@ const REPO_URL: &str = "https://github.com/Disma-git/T-Whisper";
 const START_SOUND_GAIN: f32 = 0.5;
 const STOP_SOUND_GAIN: f32 = 0.36;
 
+/// Antal steg i nivåmätaren (utöver 0). Ikoner förrenderas per steg.
+const LEVEL_STEPS: usize = 8;
+
 enum Cmd {
     StartRecording,
     StopAndTranscribe,
@@ -40,6 +43,7 @@ enum Cmd {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum AppState {
+    Loading,
     Idle,
     Recording,
     Working,
@@ -47,23 +51,50 @@ enum AppState {
 
 enum UserEvent {
     State(AppState),
-    Level(f32),
+    /// Kvantiserat mätarsteg 0..=LEVEL_STEPS.
+    Level(usize),
+    Hotkey(GlobalHotKeyEvent),
+    Menu(MenuEvent),
 }
 
-fn main() -> Result<()> {
+fn main() {
+    // Bara en instans åt gången: två instanser slåss annars om hotkey
+    // och mikrofon, och tvåan dör tyst utan konsol.
+    if !winutil::ensure_single_instance() {
+        winutil::message_box(
+            "T-Whisper",
+            "T-Whisper kör redan — titta i systemfältet.",
+            winutil::MB_ICONINFORMATION,
+        );
+        return;
+    }
+    if let Err(e) = run() {
+        log(&format!("FATALT FEL: {e:#}"));
+        winutil::message_box(
+            "T-Whisper – fel vid start",
+            &format!(
+                "{e:#}\n\nMer information finns i:\n{}",
+                config::config_dir().join("log.txt").display()
+            ),
+            winutil::MB_ICONERROR,
+        );
+    }
+}
+
+fn run() -> Result<()> {
+    // Tysta whisper.cpp/ggml:s pratiga stderr-dumpar.
+    whisper_rs::install_logging_hooks();
+
     let mut cfg = config::Config::load().context("kunde inte läsa konfigurationen")?;
-    eprintln!(
+    log(&format!(
         "T-Whisper v{VERSION} startar — modell: kb-whisper-{}, hotkey: {}",
         cfg.model, cfg.hotkey
-    );
-    let model_path = model::ensure_model(&cfg.model)?;
+    ));
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Cmd>();
     let mic_level: Arc<AtomicU32> = Arc::default();
     // Delad volym (f32 som bitar) så att menyändringar slår igenom direkt.
-    let sound_volume = Arc::new(AtomicU32::new(
-        cfg.sound_volume.clamp(0.0, 1.0).to_bits(),
-    ));
+    let sound_volume = Arc::new(AtomicU32::new(cfg.sound_volume.clamp(0.0, 1.0).to_bits()));
     // Delad flagga: skicka Shift+Enter efter varje diktering.
     let shift_enter = Arc::new(AtomicBool::new(cfg.shift_enter));
     // Delad flagga: skriv tal som siffror.
@@ -71,7 +102,8 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
-    // Arbetstråden äger mikrofon, whisper-modell och tangentbordsutmatning.
+    // Arbetstråden äger modellnedladdning, mikrofon, whisper och
+    // tangentbordsutmatning — trayikonen visas direkt medan den jobbar.
     {
         let cfg = cfg.clone();
         let proxy = event_loop.create_proxy();
@@ -81,7 +113,6 @@ fn main() -> Result<()> {
         let digits = digits.clone();
         std::thread::spawn(move || {
             controller(
-                model_path,
                 cfg,
                 cmd_rx,
                 proxy,
@@ -93,18 +124,36 @@ fn main() -> Result<()> {
         });
     }
 
-    // Nivåmätar-ticker: läser av (och nollställer) mikrofonens toppnivå 10 ggr/s.
+    // Nivåmätar-ticker: läser av (och nollställer) toppnivån 10 ggr/s men
+    // skickar bara händelser när det kvantiserade steget faktiskt ändras —
+    // vid tystnad väcks alltså inte event-loopen alls.
     {
         let proxy = event_loop.create_proxy();
         let mic_level = mic_level.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let peak = f32::from_bits(mic_level.swap(0, Ordering::Relaxed));
-            if proxy.send_event(UserEvent::Level(peak)).is_err() {
-                return;
+        std::thread::spawn(move || {
+            let mut shown = 0f32;
+            let mut last_step = usize::MAX;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let peak = f32::from_bits(mic_level.swap(0, Ordering::Relaxed));
+                let target = (peak * 6.0).min(1.0);
+                shown = if target > shown { target } else { shown * 0.5 };
+                if shown < 0.02 {
+                    shown = 0.0;
+                }
+                let step = (shown * LEVEL_STEPS as f32).round() as usize;
+                if step != last_step {
+                    last_step = step;
+                    if proxy.send_event(UserEvent::Level(step)).is_err() {
+                        return;
+                    }
+                }
             }
         });
     }
+
+    // Förrenderade ikoner: [status][mätarsteg].
+    let icons = build_icon_set();
 
     // Systemfältsikon med kontrollpanelsmeny.
     let menu = Menu::new();
@@ -147,11 +196,8 @@ fn main() -> Result<()> {
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip(format!(
-            "T-Whisper v{VERSION} — håll {} och prata",
-            cfg.hotkey
-        ))
-        .with_icon(make_icon(AppState::Idle, 0.0))
+        .with_tooltip(format!("T-Whisper v{VERSION} — startar…"))
+        .with_icon(icons[state_index(AppState::Loading)][0].clone())
         .build()?;
 
     // Global push-to-talk-tangent.
@@ -162,155 +208,160 @@ fn main() -> Result<()> {
     let hotkey_manager = GlobalHotKeyManager::new()?;
     hotkey_manager.register(hotkey)?;
 
-    let hotkey_rx = GlobalHotKeyEvent::receiver();
-    let menu_rx = MenuEvent::receiver();
+    // Händelsestyrt i stället för polling: hotkey- och menyhändelser
+    // skickas in i event-loopen via proxyn, så loopen kan sova (Wait)
+    // med ~0 % CPU i vila.
+    {
+        let proxy = event_loop.create_proxy();
+        GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
+            let _ = proxy.send_event(UserEvent::Hotkey(e));
+        }));
+        let proxy = event_loop.create_proxy();
+        MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+            let _ = proxy.send_event(UserEvent::Menu(e));
+        }));
+    }
 
-    eprintln!(
+    log(&format!(
         "Redo. Håll {} och prata; släpp för att skriva texten.",
         cfg.hotkey
-    );
+    ));
 
-    let mut cur_state = AppState::Idle;
-    let mut cur_level = 0f32;
+    let mut cur_state = AppState::Loading;
+    let mut cur_step = 0usize;
 
     event_loop.run(move |event, _, control_flow| {
-        // Kort poll-intervall: global-hotkeys kanal väcker inte tao-loopen av
-        // sig själv, så vi tittar med jämna mellanrum (försumbar CPU-kostnad).
-        *control_flow = ControlFlow::WaitUntil(
-            std::time::Instant::now() + std::time::Duration::from_millis(30),
-        );
+        *control_flow = ControlFlow::Wait;
 
-        if let Event::UserEvent(ev) = &event {
-            match ev {
-                UserEvent::State(s) => {
-                    cur_state = *s;
-                    let _ = tray.set_icon(Some(make_icon(cur_state, cur_level)));
-                }
-                UserEvent::Level(peak) => {
-                    // Perceptuell skalning + mjuk avklingning av mätaren.
-                    let target = (peak * 6.0).min(1.0);
-                    let next = if target > cur_level {
-                        target
-                    } else {
-                        cur_level * 0.6
-                    };
-                    if (next - cur_level).abs() > 0.02 || (next == 0.0 && cur_level > 0.0) {
-                        cur_level = next;
-                        let _ = tray.set_icon(Some(make_icon(cur_state, cur_level)));
-                    }
+        let Event::UserEvent(ev) = event else {
+            return;
+        };
+        match ev {
+            UserEvent::State(s) => {
+                let first_ready = cur_state == AppState::Loading && s != AppState::Loading;
+                cur_state = s;
+                let _ = tray.set_icon(Some(icons[state_index(cur_state)][cur_step].clone()));
+                if first_ready {
+                    let _ = tray.set_tooltip(Some(format!(
+                        "T-Whisper v{VERSION} — håll {} och prata",
+                        cfg.hotkey
+                    )));
                 }
             }
-        }
-
-        while let Ok(e) = hotkey_rx.try_recv() {
-            if e.id == hotkey.id() {
-                match e.state {
-                    HotKeyState::Pressed => {
-                        let _ = cmd_tx.send(Cmd::StartRecording);
-                    }
-                    HotKeyState::Released => {
-                        let _ = cmd_tx.send(Cmd::StopAndTranscribe);
-                    }
+            UserEvent::Level(step) => {
+                if step != cur_step {
+                    cur_step = step.min(LEVEL_STEPS);
+                    let _ = tray.set_icon(Some(icons[state_index(cur_state)][cur_step].clone()));
                 }
             }
-        }
-
-        while let Ok(e) = menu_rx.try_recv() {
-            if e.id == quit_item.id() {
-                *control_flow = ControlFlow::Exit;
-            } else if e.id == open_cfg_item.id() {
-                // Absolut sökväg + lokal arbetskatalog: ärvd cwd kan ligga på
-                // en nätverksenhet som paketerade Anteckningar inte hanterar.
-                let cfg_path = config::config_dir().join("config.toml");
-                let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
-                let notepad = std::path::Path::new(&windir)
-                    .join("System32")
-                    .join("notepad.exe");
-                if let Err(err) = std::process::Command::new(notepad)
-                    .arg(&cfg_path)
-                    .current_dir(config::config_dir())
-                    .spawn()
-                {
-                    eprintln!("kunde inte öppna {}: {err}", cfg_path.display());
-                }
-            } else if e.id == shift_enter_item.id() {
-                cfg.shift_enter = !cfg.shift_enter;
-                shift_enter.store(cfg.shift_enter, Ordering::Relaxed);
-                shift_enter_item.set_checked(cfg.shift_enter);
-                if let Err(e) = cfg.save() {
-                    eprintln!("kunde inte spara konfigurationen: {e}");
-                }
-                eprintln!("Shift+Enter efter diktering: {}", cfg.shift_enter);
-            } else if e.id == digits_item.id() {
-                cfg.digits = !cfg.digits;
-                digits.store(cfg.digits, Ordering::Relaxed);
-                digits_item.set_checked(cfg.digits);
-                if let Err(e) = cfg.save() {
-                    eprintln!("kunde inte spara konfigurationen: {e}");
-                }
-                eprintln!("Skriv tal som siffror: {}", cfg.digits);
-            } else if e.id == about_item.id() {
-                show_about();
-            } else if e.id == github_item.id() {
-                if let Err(err) = std::process::Command::new("explorer")
-                    .arg(REPO_URL)
-                    .current_dir(config::config_dir())
-                    .spawn()
-                {
-                    eprintln!("kunde inte öppna {REPO_URL}: {err}");
-                }
-            } else if let Some((_, name)) = key_items.iter().find(|(item, _)| e.id == *item.id())
-            {
-                match name.parse::<HotKey>() {
-                    Ok(new_hotkey) => {
-                        let _ = hotkey_manager.unregister(hotkey);
-                        match hotkey_manager.register(new_hotkey) {
-                            Ok(()) => {
-                                hotkey = new_hotkey;
-                                cfg.hotkey = name.clone();
-                                if let Err(e) = cfg.save() {
-                                    eprintln!("kunde inte spara konfigurationen: {e}");
-                                }
-                                let _ = tray.set_tooltip(Some(format!(
-                                    "T-Whisper v{VERSION} — håll {} och prata",
-                                    cfg.hotkey
-                                )));
-                                eprintln!("Inspelningsknapp ändrad till {}", cfg.hotkey);
-                            }
-                            Err(e) => {
-                                eprintln!("kunde inte registrera {name}: {e}");
-                                // Återta den gamla tangenten så appen inte blir döv.
-                                let _ = hotkey_manager.register(hotkey);
-                            }
+            UserEvent::Hotkey(e) => {
+                if e.id == hotkey.id() {
+                    match e.state {
+                        HotKeyState::Pressed => {
+                            let _ = cmd_tx.send(Cmd::StartRecording);
+                        }
+                        HotKeyState::Released => {
+                            let _ = cmd_tx.send(Cmd::StopAndTranscribe);
                         }
                     }
-                    Err(e) => eprintln!("ogiltig tangent {name}: {e:?}"),
                 }
-            } else if let Some((_, vol)) = vol_items.iter().find(|(item, _)| e.id == *item.id()) {
-                sound_volume.store(vol.to_bits(), Ordering::Relaxed);
-                cfg.sound_volume = *vol;
-                if let Err(e) = cfg.save() {
-                    eprintln!("kunde inte spara konfigurationen: {e}");
-                }
-                // Spela ett prov så användaren hör nya nivån direkt.
-                if cfg.sounds && *vol > 0.0 {
-                    sound::play(880.0, 140, STOP_SOUND_GAIN * vol);
-                }
-                eprintln!("Ljudvolym ändrad till {vol}");
             }
-            // Synka bockarna i menyn med aktuell konfiguration.
-            for (item, name) in &key_items {
-                item.set_checked(*name == cfg.hotkey);
-            }
-            for (item, vol) in &vol_items {
-                item.set_checked((cfg.sound_volume - vol).abs() < 0.05);
+            UserEvent::Menu(e) => {
+                if e.id == quit_item.id() {
+                    *control_flow = ControlFlow::Exit;
+                } else if e.id == open_cfg_item.id() {
+                    // Absolut sökväg + lokal arbetskatalog: ärvd cwd kan ligga på
+                    // en nätverksenhet som paketerade Anteckningar inte hanterar.
+                    let cfg_path = config::config_dir().join("config.toml");
+                    let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
+                    let notepad = std::path::Path::new(&windir)
+                        .join("System32")
+                        .join("notepad.exe");
+                    if let Err(err) = std::process::Command::new(notepad)
+                        .arg(&cfg_path)
+                        .current_dir(config::config_dir())
+                        .spawn()
+                    {
+                        log(&format!("kunde inte öppna {}: {err}", cfg_path.display()));
+                    }
+                } else if e.id == shift_enter_item.id() {
+                    cfg.shift_enter = !cfg.shift_enter;
+                    shift_enter.store(cfg.shift_enter, Ordering::Relaxed);
+                    shift_enter_item.set_checked(cfg.shift_enter);
+                    if let Err(e) = cfg.save() {
+                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    }
+                } else if e.id == digits_item.id() {
+                    cfg.digits = !cfg.digits;
+                    digits.store(cfg.digits, Ordering::Relaxed);
+                    digits_item.set_checked(cfg.digits);
+                    if let Err(e) = cfg.save() {
+                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    }
+                } else if e.id == about_item.id() {
+                    show_about();
+                } else if e.id == github_item.id() {
+                    if let Err(err) = std::process::Command::new("explorer")
+                        .arg(REPO_URL)
+                        .current_dir(config::config_dir())
+                        .spawn()
+                    {
+                        log(&format!("kunde inte öppna {REPO_URL}: {err}"));
+                    }
+                } else if let Some((_, name)) =
+                    key_items.iter().find(|(item, _)| e.id == *item.id())
+                {
+                    match name.parse::<HotKey>() {
+                        Ok(new_hotkey) => {
+                            let _ = hotkey_manager.unregister(hotkey);
+                            match hotkey_manager.register(new_hotkey) {
+                                Ok(()) => {
+                                    hotkey = new_hotkey;
+                                    cfg.hotkey = name.clone();
+                                    if let Err(e) = cfg.save() {
+                                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                                    }
+                                    let _ = tray.set_tooltip(Some(format!(
+                                        "T-Whisper v{VERSION} — håll {} och prata",
+                                        cfg.hotkey
+                                    )));
+                                    log(&format!("Inspelningsknapp ändrad till {}", cfg.hotkey));
+                                }
+                                Err(e) => {
+                                    log(&format!("kunde inte registrera {name}: {e}"));
+                                    // Återta den gamla tangenten så appen inte blir döv.
+                                    let _ = hotkey_manager.register(hotkey);
+                                }
+                            }
+                        }
+                        Err(e) => log(&format!("ogiltig tangent {name}: {e:?}")),
+                    }
+                } else if let Some((_, vol)) = vol_items.iter().find(|(item, _)| e.id == *item.id())
+                {
+                    sound_volume.store(vol.to_bits(), Ordering::Relaxed);
+                    cfg.sound_volume = *vol;
+                    if let Err(e) = cfg.save() {
+                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    }
+                    // Spela ett prov så användaren hör nya nivån direkt.
+                    if cfg.sounds && *vol > 0.0 {
+                        sound::play(880.0, 140, STOP_SOUND_GAIN * vol);
+                    }
+                }
+                // Synka bockarna i menyn med aktuell konfiguration.
+                for (item, name) in &key_items {
+                    item.set_checked(*name == cfg.hotkey);
+                }
+                for (item, vol) in &vol_items {
+                    item.set_checked((cfg.sound_volume - vol).abs() < 0.05);
+                }
             }
         }
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn controller(
-    model_path: PathBuf,
     cfg: config::Config,
     rx: Receiver<Cmd>,
     proxy: EventLoopProxy<UserEvent>,
@@ -319,38 +370,87 @@ fn controller(
     shift_enter: Arc<AtomicBool>,
     digits: Arc<AtomicBool>,
 ) {
-    let recorder = match audio::Recorder::new(mic_level) {
-        Ok(r) => r,
+    let fail = |title: &str, err: &str| {
+        log(&format!("FEL: {err}"));
+        winutil::message_box(title, err, winutil::MB_ICONERROR);
+    };
+
+    let _ = proxy.send_event(UserEvent::State(AppState::Loading));
+
+    // Modellnedladdning och -laddning sker här så att trayikonen
+    // hinner visas direkt vid start.
+    let model_path = match model::ensure_model(&cfg.model) {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("FEL: kunde inte öppna mikrofonen: {e}");
+            fail(
+                "T-Whisper – modellfel",
+                &format!(
+                    "Kunde inte hämta modellen kb-whisper-{}:\n{e:#}\n\n\
+                     Kontrollera internetanslutningen och starta om T-Whisper.",
+                    cfg.model
+                ),
+            );
             return;
         }
     };
-    eprintln!("Laddar whisper-modellen…");
+    let mut recorder = match audio::Recorder::new(mic_level.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            fail(
+                "T-Whisper – mikrofonfel",
+                &format!("Kunde inte öppna mikrofonen:\n{e:#}"),
+            );
+            return;
+        }
+    };
+    log("Laddar whisper-modellen…");
     let t0 = std::time::Instant::now();
-    let transcriber = match transcribe::Transcriber::new(
+    let mut transcriber = match transcribe::Transcriber::new(
         model_path.to_str().expect("ogiltig modellsökväg"),
         &cfg.language,
     ) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("FEL: kunde inte ladda modellen: {e}");
+            fail(
+                "T-Whisper – modellfel",
+                &format!("Kunde inte ladda modellen:\n{e:#}"),
+            );
             return;
         }
     };
-    eprintln!("Modellen laddad på {:.1} s.", t0.elapsed().as_secs_f32());
+    log(&format!(
+        "Modellen laddad på {:.1} s.",
+        t0.elapsed().as_secs_f32()
+    ));
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("FEL: kunde inte initiera tangentbordsutmatning: {e}");
+            fail(
+                "T-Whisper – inmatningsfel",
+                &format!("Kunde inte initiera tangentbordsutmatningen:\n{e}"),
+            );
             return;
         }
     };
+
+    let _ = proxy.send_event(UserEvent::State(AppState::Idle));
 
     let mut recording = false;
     for cmd in rx {
         match cmd {
             Cmd::StartRecording if !recording => {
+                // Föll mikrofonströmmen (t.ex. headset avstängt) byggs
+                // inspelaren om mot nuvarande standardenhet.
+                if recorder.failed() {
+                    log("mikrofonströmmen har fallit — bygger om mot aktuell enhet");
+                    match audio::Recorder::new(mic_level.clone()) {
+                        Ok(r) => recorder = r,
+                        Err(e) => {
+                            log(&format!("kunde inte öppna mikrofonen: {e}"));
+                            continue;
+                        }
+                    }
+                }
                 recording = true;
                 recorder.start();
                 let vol = f32::from_bits(sound_volume.load(Ordering::Relaxed));
@@ -372,14 +472,14 @@ fn controller(
                     let t = std::time::Instant::now();
                     match transcriber.transcribe(&samples, digits.load(Ordering::Relaxed)) {
                         Ok(text) if !text.is_empty() => {
-                            eprintln!("[{:.2} s] {text}", t.elapsed().as_secs_f32());
+                            log(&format!("[{:.2} s] {text}", t.elapsed().as_secs_f32()));
                             let out = if cfg.append_space {
                                 format!("{text} ")
                             } else {
                                 text
                             };
                             if let Err(e) = insert_text(&mut enigo, &out, cfg.paste) {
-                                eprintln!("kunde inte skriva texten: {e}");
+                                log(&format!("kunde inte skriva texten: {e}"));
                             } else if shift_enter.load(Ordering::Relaxed) {
                                 // Ny rad efter dikteringen (mjuk radbrytning).
                                 let _ = enigo.key(Key::Shift, Direction::Press);
@@ -387,8 +487,8 @@ fn controller(
                                 let _ = enigo.key(Key::Shift, Direction::Release);
                             }
                         }
-                        Ok(_) => eprintln!("(inget tal uppfattades)"),
-                        Err(e) => eprintln!("transkriberingsfel: {e}"),
+                        Ok(_) => log("(inget tal uppfattades)"),
+                        Err(e) => log(&format!("transkriberingsfel: {e}")),
                     }
                 }
                 let _ = proxy.send_event(UserEvent::State(AppState::Idle));
@@ -422,23 +522,8 @@ fn show_about() {
              Projekt och källkod:\n\
              {REPO_URL}"
         );
-        let to_wide = |s: &str| {
-            s.encode_utf16()
-                .chain(std::iter::once(0))
-                .collect::<Vec<u16>>()
-        };
-        let text_w = to_wide(&text);
-        let caption_w = to_wide("Om T-Whisper");
-        const MB_OK_ICONINFORMATION: u32 = 0x40;
-        unsafe {
-            MessageBoxW(0, text_w.as_ptr(), caption_w.as_ptr(), MB_OK_ICONINFORMATION);
-        }
+        winutil::message_box("Om T-Whisper", &text, winutil::MB_ICONINFORMATION);
     });
-}
-
-#[link(name = "user32")]
-extern "system" {
-    fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, utype: u32) -> i32;
 }
 
 /// Skriver in text vid markören. Urklipp + Ctrl+V är standard eftersom
@@ -464,12 +549,41 @@ fn insert_text(enigo: &mut Enigo, text: &str, paste: bool) -> Result<()> {
     Ok(())
 }
 
-/// Ikon: statusfärgad ring (blå = redo, röd = inspelning, gul = transkriberar)
-/// med en grön nivåstapel i mitten som följer mikrofonens ljudnivå.
+fn state_index(state: AppState) -> usize {
+    match state {
+        AppState::Loading => 0,
+        AppState::Idle => 1,
+        AppState::Recording => 2,
+        AppState::Working => 3,
+    }
+}
+
+/// Förrenderar alla ikoner (4 statusar × nivåsteg) en gång vid start
+/// så att mätaruppdateringar bara klonar ett handtag.
+fn build_icon_set() -> Vec<Vec<tray_icon::Icon>> {
+    [
+        AppState::Loading,
+        AppState::Idle,
+        AppState::Recording,
+        AppState::Working,
+    ]
+    .iter()
+    .map(|state| {
+        (0..=LEVEL_STEPS)
+            .map(|step| make_icon(*state, step as f32 / LEVEL_STEPS as f32))
+            .collect()
+    })
+    .collect()
+}
+
+/// Ikon: statusfärgad ring (grå = laddar, blå = redo, röd = inspelning,
+/// gul = transkriberar) med en grön nivåstapel i mitten som följer
+/// mikrofonens ljudnivå.
 fn make_icon(state: AppState, level: f32) -> tray_icon::Icon {
     const S: i32 = 32;
     let (rr, rg, rb) = match state {
-        AppState::Idle => (90u8, 120u8, 200u8),
+        AppState::Loading => (130u8, 130u8, 140u8),
+        AppState::Idle => (90, 120, 200),
         AppState::Recording => (220, 60, 60),
         AppState::Working => (230, 170, 50),
     };

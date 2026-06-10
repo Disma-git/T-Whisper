@@ -1,27 +1,37 @@
 use anyhow::Result;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+};
 
 pub struct Transcriber {
-    ctx: WhisperContext,
+    state: WhisperState,
     language: String,
 }
 
 impl Transcriber {
     pub fn new(model_path: &str, language: &str) -> Result<Self> {
-        let ctx = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())?;
+        let mut ctx_params = WhisperContextParameters::default();
+        // Flash attention snabbar upp encode/decode rejält på moderna
+        // NVIDIA-kort; ignoreras tyst där det saknar stöd.
+        ctx_params.flash_attn(true);
+        let ctx = WhisperContext::new_with_params(model_path, ctx_params)?;
+        // Staten (kv-cache + compute-buffertar, ~330 MB) skapas en gång
+        // och återanvänds mellan yttranden.
+        let state = ctx.create_state()?;
         Ok(Self {
-            ctx,
+            state,
             language: language.to_string(),
         })
     }
 
-    pub fn transcribe(&self, audio: &[f32], digits: bool) -> Result<String> {
-        let mut state = self.ctx.create_state()?;
+    pub fn transcribe(&mut self, audio: &[f32], digits: bool) -> Result<String> {
+        let state = &mut self.state;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some(&self.language));
         if digits {
             // Stilprompt: får modellen att föredra siffror framför talord.
-            params.set_initial_prompt("Mötet den 3 juni: 25 deltagare, klockan 14.30, 5000 kronor.");
+            params
+                .set_initial_prompt("Mötet den 3 juni: 25 deltagare, klockan 14.30, 5000 kronor.");
         }
         params.set_print_progress(false);
         params.set_print_realtime(false);

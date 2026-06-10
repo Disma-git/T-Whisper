@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+/// Maximal inspelningslängd som ringbufferten rymmer.
+const MAX_RECORD_SECS: usize = 90;
 
 /// Uppdaterar den delade toppnivån (f32 lagrad som bitar i AtomicU32) om
 /// den nya toppen är högre. Nollställs av avläsaren via swap.
@@ -14,12 +17,43 @@ fn bump_peak(level: &AtomicU32, peak: f32) {
 
 /// Mikrofoninspelare. Strömmen är alltid igång men samplar buffras bara
 /// när `active` är satt — det ger noll fördröjning vid push-to-talk-start.
+/// Ljudcallbacken är lås- och allokeringsfri (SPSC-ringbuffert).
 pub struct Recorder {
     _stream: cpal::Stream,
-    buf: Arc<Mutex<Vec<f32>>>,
+    consumer: rtrb::Consumer<f32>,
     active: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
     sample_rate: u32,
     channels: u16,
+}
+
+/// Föredrar 16 kHz (whispers indataformat, ingen resampling) med så få
+/// kanaler som möjligt; faller tillbaka till enhetens standardformat.
+fn pick_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig> {
+    let target = cpal::SampleRate(16_000);
+    if let Ok(ranges) = device.supported_input_configs() {
+        let mut best: Option<cpal::SupportedStreamConfig> = None;
+        for range in ranges {
+            let ok_format = matches!(
+                range.sample_format(),
+                cpal::SampleFormat::F32 | cpal::SampleFormat::I16
+            );
+            if ok_format && range.min_sample_rate() <= target && target <= range.max_sample_rate() {
+                let candidate = range.with_sample_rate(target);
+                let better = match &best {
+                    None => true,
+                    Some(b) => candidate.channels() < b.channels(),
+                };
+                if better {
+                    best = Some(candidate);
+                }
+            }
+        }
+        if let Some(cfg) = best {
+            return Ok(cfg);
+        }
+    }
+    Ok(device.default_input_config()?)
 }
 
 impl Recorder {
@@ -30,22 +64,30 @@ impl Recorder {
         let device = host
             .default_input_device()
             .ok_or_else(|| anyhow!("ingen mikrofon hittades"))?;
-        eprintln!(
-            "Mikrofon: {}",
-            device.name().unwrap_or_else(|_| "okänd".into())
-        );
-        let supported = device.default_input_config()?;
+        let supported = pick_config(&device)?;
         let sample_rate = supported.sample_rate().0;
         let channels = supported.channels();
         let sample_format = supported.sample_format();
         let stream_cfg: cpal::StreamConfig = supported.into();
+        crate::winutil::log(&format!(
+            "Mikrofon: {} ({} Hz, {} kanal(er), {sample_format:?})",
+            device.name().unwrap_or_else(|_| "okänd".into()),
+            sample_rate,
+            channels
+        ));
 
-        let buf: Arc<Mutex<Vec<f32>>> = Arc::default();
+        let capacity = MAX_RECORD_SECS * sample_rate as usize * channels as usize;
+        let (mut producer, consumer) = rtrb::RingBuffer::new(capacity);
+
         let active = Arc::new(AtomicBool::new(false));
-        let b = buf.clone();
+        let failed = Arc::new(AtomicBool::new(false));
         let a = active.clone();
-        let lvl = level.clone();
-        let err_fn = |e| eprintln!("ljudfel: {e}");
+        let lvl = level;
+        let f = failed.clone();
+        let err_fn = move |e| {
+            crate::winutil::log(&format!("ljudfel på mikrofonströmmen: {e}"));
+            f.store(true, Ordering::Relaxed);
+        };
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => device.build_input_stream(
@@ -54,7 +96,13 @@ impl Recorder {
                     let peak = data.iter().fold(0f32, |m, s| m.max(s.abs()));
                     bump_peak(&lvl, peak);
                     if a.load(Ordering::Relaxed) {
-                        b.lock().unwrap().extend_from_slice(data);
+                        for &s in data {
+                            // Full buffert => äldsta ljudet vinner; tappet loggas inte
+                            // härifrån (callbacken får inte blockera eller allokera).
+                            if producer.push(s).is_err() {
+                                break;
+                            }
+                        }
                     }
                 },
                 err_fn,
@@ -68,8 +116,11 @@ impl Recorder {
                         .fold(0f32, |m, s| m.max((*s as f32 / 32768.0).abs()));
                     bump_peak(&lvl, peak);
                     if a.load(Ordering::Relaxed) {
-                        let mut b = b.lock().unwrap();
-                        b.extend(data.iter().map(|s| *s as f32 / 32768.0));
+                        for &s in data {
+                            if producer.push(s as f32 / 32768.0).is_err() {
+                                break;
+                            }
+                        }
                     }
                 },
                 err_fn,
@@ -81,22 +132,34 @@ impl Recorder {
 
         Ok(Self {
             _stream: stream,
-            buf,
+            consumer,
             active,
+            failed,
             sample_rate,
             channels,
         })
     }
 
-    pub fn start(&self) {
-        self.buf.lock().unwrap().clear();
+    /// True om ljudströmmen har rapporterat fel (t.ex. enheten försvann).
+    /// Inspelaren bör då byggas om med `Recorder::new`.
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    pub fn start(&mut self) {
+        // Töm rester från ev. tidigare inspelning.
+        while self.consumer.pop().is_ok() {}
         self.active.store(true, Ordering::Relaxed);
     }
 
-    /// Stoppar buffringen och returnerar ljudet som 16 kHz mono f32 (whispers indataformat).
-    pub fn stop(&self) -> Vec<f32> {
+    /// Stoppar buffringen och returnerar ljudet som 16 kHz mono f32
+    /// (whispers indataformat).
+    pub fn stop(&mut self) -> Vec<f32> {
         self.active.store(false, Ordering::Relaxed);
-        let raw = std::mem::take(&mut *self.buf.lock().unwrap());
+        let mut raw = Vec::with_capacity(self.consumer.slots());
+        while let Ok(s) = self.consumer.pop() {
+            raw.push(s);
+        }
         to_whisper_input(&raw, self.channels, self.sample_rate)
     }
 }

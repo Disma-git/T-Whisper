@@ -48,6 +48,8 @@ Name: "desktopicon"; Description: "Skapa en genväg på skrivbordet"; Flags: unc
 [Files]
 Source: "{#StageDir}\t-whisper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\NOTICE.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\T-Whisper"; Filename: "{app}\t-whisper.exe"

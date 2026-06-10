@@ -1,8 +1,8 @@
-/// Konvertering av svenska talord till siffror, t.ex.
-/// "tjugofem" -> "25", "etthundratjugotre" -> "123", "femtusen" -> "5000".
-///
-/// Fristående "en"/"ett" lämnas orörda eftersom de oftast är artiklar
-/// ("en katt" ska inte bli "1 katt").
+//! Konvertering av svenska talord till siffror, t.ex.
+//! "tjugofem" -> "25", "etthundratjugotre" -> "123", "femtusen" -> "5000".
+//!
+//! Fristående "en"/"ett" lämnas orörda eftersom de oftast är artiklar
+//! ("en katt" ska inte bli "1 katt").
 
 const PARTS: &[(&str, u64)] = &[
     ("noll", 0),
@@ -164,12 +164,18 @@ mod tests {
 
     #[test]
     fn text_konvertering() {
-        assert_eq!(convert_sv("Han köpte tjugofem äpplen."), "Han köpte 25 äpplen.");
+        assert_eq!(
+            convert_sv("Han köpte tjugofem äpplen."),
+            "Han köpte 25 äpplen."
+        );
         assert_eq!(convert_sv("en katt och ett hus"), "en katt och ett hus");
         assert_eq!(
             convert_sv("Tjugofem personer kom klockan fjorton."),
             "25 personer kom klockan 14."
         );
-        assert_eq!(convert_sv("Det kostar femtusen kronor."), "Det kostar 5000 kronor.");
+        assert_eq!(
+            convert_sv("Det kostar femtusen kronor."),
+            "Det kostar 5000 kronor."
+        );
     }
 }

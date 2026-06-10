@@ -52,12 +52,30 @@ impl Config {
         let path = config_dir().join("config.toml");
         if path.exists() {
             let raw = std::fs::read_to_string(&path)?;
-            let cfg: Self = toml::from_str(&raw)?;
-            // Uppgradera äldre, okommenterade filer till dokumenterat format.
-            if !raw.starts_with("# ==") {
-                cfg.save()?;
+            match toml::from_str::<Self>(&raw) {
+                Ok(cfg) => {
+                    // Uppgradera äldre, okommenterade filer till dokumenterat format.
+                    if !raw.starts_with("# ==") {
+                        cfg.save()?;
+                    }
+                    Ok(cfg)
+                }
+                Err(e) => {
+                    // Trasig konfig ska inte hindra start: kör på standard-
+                    // värden och låt användarens fil vara orörd för rättning.
+                    crate::winutil::log(&format!("konfigurationsfel i config.toml: {e}"));
+                    crate::winutil::message_box(
+                        "T-Whisper – konfigurationsfel",
+                        &format!(
+                            "config.toml kunde inte läsas och standardinställningar används.\n\n\
+                             Fel: {e}\n\nFilen har lämnats orörd: {}",
+                            path.display()
+                        ),
+                        crate::winutil::MB_ICONWARNING,
+                    );
+                    Ok(Self::default())
+                }
             }
-            Ok(cfg)
         } else {
             let cfg = Self::default();
             cfg.save()?;

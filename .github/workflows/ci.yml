@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    env:
+      # GitHub-runnern har LLVM förinstallerat; bindgen behöver libclang.
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Formatkontroll
+        run: cargo fmt --check
+      - name: Clippy (CPU-features)
+        run: cargo clippy --all-targets
+      - name: Tester
+        run: cargo test
