@@ -1,6 +1,6 @@
 # T-Whisper v0.3.0
 
-[![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release)](https://github.com/Disma-git/T-Whisper/releases/latest)
+[![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release&cacheSeconds=3600)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
 
 Snabb, lätt push-to-talk-diktering för Windows 11 på **svenska**. Håll en tangent (standard **F9**), prata, släpp — texten skrivs in vid markören i vilket program du än står i. Allt körs lokalt på din dator, inget skickas till molnet.
