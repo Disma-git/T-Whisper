@@ -25,6 +25,9 @@ const HOTKEY_CHOICES: [&str; 12] = [
 const VOLUME_CHOICES: [(&str, f32); 4] =
     [("Av", 0.0), ("Låg", 0.2), ("Mellan", 0.5), ("Hög", 1.0)];
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const REPO_URL: &str = "https://github.com/Disma-git/T-Whisper";
+
 // Grundnivåer för feedbackljuden; skalas med konfigurerad volym.
 const START_SOUND_GAIN: f32 = 0.5;
 const STOP_SOUND_GAIN: f32 = 0.36;
@@ -49,7 +52,7 @@ enum UserEvent {
 fn main() -> Result<()> {
     let mut cfg = config::Config::load().context("kunde inte läsa konfigurationen")?;
     eprintln!(
-        "T-Whisper startar — modell: kb-whisper-{}, hotkey: {}",
+        "T-Whisper v{VERSION} startar — modell: kb-whisper-{}, hotkey: {}",
         cfg.model, cfg.hotkey
     );
     let model_path = model::ensure_model(&cfg.model)?;
@@ -109,12 +112,20 @@ fn main() -> Result<()> {
     let open_cfg_item = MenuItem::new("Öppna konfigurationsfil", true, None);
     menu.append(&open_cfg_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
+    let about_item = MenuItem::new(format!("Om T-Whisper… (v{VERSION})"), true, None);
+    menu.append(&about_item)?;
+    let github_item = MenuItem::new("Öppna GitHub-sidan", true, None);
+    menu.append(&github_item)?;
+    menu.append(&PredefinedMenuItem::separator())?;
     let quit_item = MenuItem::new("Avsluta", true, None);
     menu.append(&quit_item)?;
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip(format!("T-Whisper — håll {} och prata", cfg.hotkey))
+        .with_tooltip(format!(
+            "T-Whisper v{VERSION} — håll {} och prata",
+            cfg.hotkey
+        ))
         .with_icon(make_icon(AppState::Idle, 0.0))
         .build()?;
 
@@ -197,6 +208,16 @@ fn main() -> Result<()> {
                 {
                     eprintln!("kunde inte öppna {}: {err}", cfg_path.display());
                 }
+            } else if e.id == about_item.id() {
+                show_about();
+            } else if e.id == github_item.id() {
+                if let Err(err) = std::process::Command::new("explorer")
+                    .arg(REPO_URL)
+                    .current_dir(config::config_dir())
+                    .spawn()
+                {
+                    eprintln!("kunde inte öppna {REPO_URL}: {err}");
+                }
             } else if let Some((_, name)) = key_items.iter().find(|(item, _)| e.id == *item.id())
             {
                 match name.parse::<HotKey>() {
@@ -210,7 +231,7 @@ fn main() -> Result<()> {
                                     eprintln!("kunde inte spara konfigurationen: {e}");
                                 }
                                 let _ = tray.set_tooltip(Some(format!(
-                                    "T-Whisper — håll {} och prata",
+                                    "T-Whisper v{VERSION} — håll {} och prata",
                                     cfg.hotkey
                                 )));
                                 eprintln!("Inspelningsknapp ändrad till {}", cfg.hotkey);
@@ -327,6 +348,49 @@ fn controller(
             _ => {}
         }
     }
+}
+
+/// Visar en Om-ruta med version, projektinfo och GitHub-länk.
+/// Körs i egen tråd så att meddelanderutan inte blockerar event-loopen.
+fn show_about() {
+    std::thread::spawn(|| {
+        let engine = if cfg!(feature = "cuda") {
+            "whisper.cpp (NVIDIA CUDA)"
+        } else if cfg!(feature = "vulkan") {
+            "whisper.cpp (Vulkan)"
+        } else {
+            "whisper.cpp (CPU)"
+        };
+        let text = format!(
+            "T-Whisper v{VERSION}\n\
+             \n\
+             Push-to-talk-diktering på svenska för Windows 11.\n\
+             Håll inspelningsknappen, prata, släpp — texten skrivs\n\
+             in vid markören. Allt körs lokalt, inget skickas till molnet.\n\
+             \n\
+             Motor: {engine}\n\
+             Modell: KB-Whisper (Kungliga biblioteket)\n\
+             \n\
+             Projekt och källkod:\n\
+             {REPO_URL}"
+        );
+        let to_wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+        let text_w = to_wide(&text);
+        let caption_w = to_wide("Om T-Whisper");
+        const MB_OK_ICONINFORMATION: u32 = 0x40;
+        unsafe {
+            MessageBoxW(0, text_w.as_ptr(), caption_w.as_ptr(), MB_OK_ICONINFORMATION);
+        }
+    });
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, utype: u32) -> i32;
 }
 
 /// Skriver in text vid markören. Urklipp + Ctrl+V är standard eftersom
