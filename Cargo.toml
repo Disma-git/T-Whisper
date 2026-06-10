@@ -12,6 +12,7 @@ vulkan = ["whisper-rs/vulkan"]
 
 [dependencies]
 anyhow = "1"
+arboard = "3"
 cpal = "0.15"
 dirs = "5"
 enigo = "0.2"

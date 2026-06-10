@@ -6,7 +6,7 @@ mod model;
 mod transcribe;
 
 use anyhow::{Context, Result};
-use enigo::{Enigo, Keyboard, Settings};
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use global_hotkey::{
     hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 };
@@ -169,7 +169,7 @@ fn controller(
                             } else {
                                 text
                             };
-                            if let Err(e) = enigo.text(&out) {
+                            if let Err(e) = insert_text(&mut enigo, &out, cfg.paste) {
                                 eprintln!("kunde inte skriva texten: {e}");
                             }
                         }
@@ -182,6 +182,29 @@ fn controller(
             _ => {}
         }
     }
+}
+
+/// Skriver in text vid markören. Urklipp + Ctrl+V är standard eftersom
+/// teckenvis SendInput tappar tecken i många program; användarens
+/// gamla urklipp återställs efteråt.
+fn insert_text(enigo: &mut Enigo, text: &str, paste: bool) -> Result<()> {
+    if !paste {
+        enigo.text(text)?;
+        return Ok(());
+    }
+    let mut clipboard = arboard::Clipboard::new()?;
+    let previous = clipboard.get_text().ok();
+    clipboard.set_text(text.to_string())?;
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    enigo.key(Key::Control, Direction::Press)?;
+    enigo.key(Key::Unicode('v'), Direction::Click)?;
+    enigo.key(Key::Control, Direction::Release)?;
+    // Ge mottagarprogrammet tid att läsa urklippet innan det återställs.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    if let Some(prev) = previous {
+        let _ = clipboard.set_text(prev);
+    }
+    Ok(())
 }
 
 /// Enkel rund ikon i given färg, genererad i minnet (ingen asset-fil behövs).

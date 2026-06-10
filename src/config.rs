@@ -13,6 +13,8 @@ pub struct Config {
     pub language: String,
     /// Lägg till ett blanksteg efter inskriven text
     pub append_space: bool,
+    /// Skriv in texten via urklipp + Ctrl+V (robust) i stället för teckenvis
+    pub paste: bool,
 }
 
 impl Default for Config {
@@ -22,6 +24,7 @@ impl Default for Config {
             model: "small".into(),
             language: "sv".into(),
             append_space: true,
+            paste: true,
         }
     }
 }
