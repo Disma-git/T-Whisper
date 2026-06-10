@@ -15,6 +15,8 @@ pub struct Config {
     pub append_space: bool,
     /// Skriv in texten via urklipp + Ctrl+V (robust) i stället för teckenvis
     pub paste: bool,
+    /// Skicka Shift+Enter efter varje diktering (ny rad i t.ex. Notepad)
+    pub shift_enter: bool,
     /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
     pub sounds: bool,
     /// Volym för feedbackljuden, 0.0–1.0
@@ -29,6 +31,7 @@ impl Default for Config {
             language: "sv".into(),
             append_space: true,
             paste: true,
+            shift_enter: false,
             sounds: true,
             sound_volume: 0.5,
         }
@@ -113,6 +116,11 @@ append_space = {append_space}
 #          tecken i vissa program, men funkar där Ctrl+V inte gör det)
 paste = {paste}
 
+#  true = skicka Shift+Enter efter varje diktering, så att varje
+#  mening hamnar på en ny rad (praktiskt i t.ex. Anteckningar).
+#  Kan även slås av/på i systemfältsmenyn.
+shift_enter = {shift_enter}
+
 # --------------------------------------------------------------
 #  Ljudfeedback: dovt klick när inspelningen startar, pling när
 #  knappen släpps.
@@ -127,6 +135,7 @@ sound_volume = {sound_volume}
             language = self.language,
             append_space = self.append_space,
             paste = self.paste,
+            shift_enter = self.shift_enter,
             sound_volume = self.sound_volume,
             sounds = self.sounds,
         )

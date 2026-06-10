@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use tao::event::Event;
@@ -63,6 +63,8 @@ fn main() -> Result<()> {
     let sound_volume = Arc::new(AtomicU32::new(
         cfg.sound_volume.clamp(0.0, 1.0).to_bits(),
     ));
+    // Delad flagga: skicka Shift+Enter efter varje diktering.
+    let shift_enter = Arc::new(AtomicBool::new(cfg.shift_enter));
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
@@ -72,8 +74,17 @@ fn main() -> Result<()> {
         let proxy = event_loop.create_proxy();
         let mic_level = mic_level.clone();
         let sound_volume = sound_volume.clone();
+        let shift_enter = shift_enter.clone();
         std::thread::spawn(move || {
-            controller(model_path, cfg, cmd_rx, proxy, mic_level, sound_volume)
+            controller(
+                model_path,
+                cfg,
+                cmd_rx,
+                proxy,
+                mic_level,
+                sound_volume,
+                shift_enter,
+            )
         });
     }
 
@@ -109,6 +120,13 @@ fn main() -> Result<()> {
         vol_items.push((item, vol));
     }
     menu.append(&volume_submenu)?;
+    let shift_enter_item = CheckMenuItem::new(
+        "Shift+Enter efter varje diktering",
+        true,
+        cfg.shift_enter,
+        None,
+    );
+    menu.append(&shift_enter_item)?;
     let open_cfg_item = MenuItem::new("Öppna konfigurationsfil", true, None);
     menu.append(&open_cfg_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
@@ -208,6 +226,14 @@ fn main() -> Result<()> {
                 {
                     eprintln!("kunde inte öppna {}: {err}", cfg_path.display());
                 }
+            } else if e.id == shift_enter_item.id() {
+                cfg.shift_enter = !cfg.shift_enter;
+                shift_enter.store(cfg.shift_enter, Ordering::Relaxed);
+                shift_enter_item.set_checked(cfg.shift_enter);
+                if let Err(e) = cfg.save() {
+                    eprintln!("kunde inte spara konfigurationen: {e}");
+                }
+                eprintln!("Shift+Enter efter diktering: {}", cfg.shift_enter);
             } else if e.id == about_item.id() {
                 show_about();
             } else if e.id == github_item.id() {
@@ -275,6 +301,7 @@ fn controller(
     proxy: EventLoopProxy<UserEvent>,
     mic_level: Arc<AtomicU32>,
     sound_volume: Arc<AtomicU32>,
+    shift_enter: Arc<AtomicBool>,
 ) {
     let recorder = match audio::Recorder::new(mic_level) {
         Ok(r) => r,
@@ -337,6 +364,11 @@ fn controller(
                             };
                             if let Err(e) = insert_text(&mut enigo, &out, cfg.paste) {
                                 eprintln!("kunde inte skriva texten: {e}");
+                            } else if shift_enter.load(Ordering::Relaxed) {
+                                // Ny rad efter dikteringen (mjuk radbrytning).
+                                let _ = enigo.key(Key::Shift, Direction::Press);
+                                let _ = enigo.key(Key::Return, Direction::Click);
+                                let _ = enigo.key(Key::Shift, Direction::Release);
                             }
                         }
                         Ok(_) => eprintln!("(inget tal uppfattades)"),
