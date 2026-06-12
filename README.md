@@ -1,4 +1,4 @@
-# T-Whisper v0.5.0
+# T-Whisper v0.5.1
 
 [![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release&cacheSeconds=3600)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
@@ -97,6 +97,7 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 | Version | Datum | Nyheter |
 |---|---|---|
+| **0.5.1** | 2026-06-13 | Systemfältsikonen lyser röd hela tiden kontinuerligt läge är på (inte bara under tal), så att det syns tydligt att appen lyssnar |
 | **0.5.0** | 2026-06-13 | Kontinuerligt läge med röstaktivitetsdetektering (Silero-VAD): tryck F10 så lyssnar appen passivt och transkriberar automatiskt vid tal följt av paus; egen aktiveringsknapp valbar F1–F12 i menyn; VAD-modellen (<1 MB) laddas ner automatiskt vid första aktivering |
 | **0.4.0** | 2026-06-12 | Mikrofonval i systemfältsmenyn (valet sparas; strömmen byggs om direkt); uppdateringskoll mot GitHub Releases — tyst vid start plus menyposten "Sök efter uppdateringar" |
 | **0.3.0** | 2026-06-10 | Stort optimerings- och robusthetspaket: whisper-state återanvänds + flash attention (snabbare svar); händelsestyrd event-loop (~0 % CPU i vila); lås-fri ljudbuffert; 16 kHz väljs direkt när mikrofonen stödjer det; single-instance-skydd; felmeddelanden i dialogrutor + loggfil (%APPDATA%\T-Whisper\log.txt); mikrofonströmmen byggs om automatiskt vid enhetsbyte; trasig konfig stoppar inte starten; trayikonen visas direkt vid start; app-ikon i Utforskaren; LICENSE/NOTICE; CI på GitHub Actions |

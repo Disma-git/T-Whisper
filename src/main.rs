@@ -716,7 +716,7 @@ fn controller(
                 vad::GateEvent::SpeechStarted => {
                     let _ = proxy.send_event(UserEvent::State(AppState::Recording));
                 }
-                ev @ (vad::GateEvent::UtteranceEnded | vad::GateEvent::ForcedCut) => {
+                vad::GateEvent::UtteranceEnded | vad::GateEvent::ForcedCut => {
                     let _ = proxy.send_event(UserEvent::State(AppState::Working));
                     let samples = std::mem::take(&mut buf);
                     handle_utterance(
@@ -727,12 +727,8 @@ fn controller(
                         &shift_enter,
                         &digits,
                     );
-                    let next = if ev == vad::GateEvent::ForcedCut {
-                        AppState::Recording
-                    } else {
-                        AppState::Idle
-                    };
-                    let _ = proxy.send_event(UserEvent::State(next));
+                    // Tillbaka till röd: läget lyssnar fortfarande.
+                    let _ = proxy.send_event(UserEvent::State(AppState::Recording));
                 }
             }
             continue;
@@ -811,6 +807,7 @@ fn controller(
                             recorder.start();
                             buf.clear();
                             gate.reset();
+                            let _ = proxy.send_event(UserEvent::State(AppState::Recording));
                         }
                     }
                     Err(e) => log(&format!("kunde inte öppna mikrofonen: {e}")),
@@ -862,7 +859,8 @@ fn activate_continuous(
     buf.clear();
     recorder.start();
     log("kontinuerligt läge på — lyssnar");
-    let _ = proxy.send_event(UserEvent::State(AppState::Idle));
+    // Röd ring hela tiden läget är på, så att det syns att appen lyssnar.
+    let _ = proxy.send_event(UserEvent::State(AppState::Recording));
     true
 }
 
