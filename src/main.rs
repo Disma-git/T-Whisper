@@ -7,6 +7,7 @@ mod numbers;
 mod sound;
 mod transcribe;
 mod update;
+mod vad;
 mod winutil;
 
 use anyhow::{Context, Result};
@@ -42,6 +43,8 @@ enum Cmd {
     StopAndTranscribe,
     /// Byt mikrofon; tom sträng = Windows standardenhet.
     SetMicrophone(String),
+    /// Slå på/av kontinuerligt läge (auto-lyssning med VAD).
+    SetContinuous(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +63,8 @@ enum UserEvent {
     Menu(MenuEvent),
     /// En nyare version (taggen) finns på GitHub.
     UpdateAvailable(String),
+    /// Kontinuerligt läge kunde inte aktiveras — återställ menybocken.
+    ContinuousOff,
 }
 
 fn main() {
@@ -170,6 +175,20 @@ fn run() -> Result<()> {
         key_items.push((item, name.to_string()));
     }
     menu.append(&hotkey_submenu)?;
+    // Kontinuerligt läge: på/av-bock + egen aktiveringsknapp (F1–F12).
+    let cont_submenu = Submenu::new("Kontinuerligt läge", true);
+    let continuous_item =
+        CheckMenuItem::new("Aktiverat (auto-lyssning)", true, cfg.continuous, None);
+    cont_submenu.append(&continuous_item)?;
+    let vad_key_submenu = Submenu::new("Aktiveringsknapp", true);
+    let mut vad_key_items: Vec<(CheckMenuItem, String)> = Vec::new();
+    for name in HOTKEY_CHOICES {
+        let item = CheckMenuItem::new(name, true, name == cfg.continuous_hotkey, None);
+        vad_key_submenu.append(&item)?;
+        vad_key_items.push((item, name.to_string()));
+    }
+    cont_submenu.append(&vad_key_submenu)?;
+    menu.append(&cont_submenu)?;
     // Mikrofonval: "Systemstandard" + enheterna som fanns vid appstart.
     let mic_submenu = Submenu::new("Mikrofon", true);
     let mut mic_items: Vec<(CheckMenuItem, String)> = Vec::new();
@@ -229,6 +248,20 @@ fn run() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("ogiltig hotkey '{}': {e:?}", cfg.hotkey))?;
     let hotkey_manager = GlobalHotKeyManager::new()?;
     hotkey_manager.register(hotkey)?;
+    // Tangent som togglar kontinuerligt läge. Misslyckad registrering är
+    // inte fatal — läget kan fortfarande styras via menyn.
+    let mut vad_hotkey: HotKey = cfg.continuous_hotkey.parse().map_err(|e| {
+        anyhow::anyhow!(
+            "ogiltig continuous_hotkey '{}': {e:?}",
+            cfg.continuous_hotkey
+        )
+    })?;
+    if let Err(e) = hotkey_manager.register(vad_hotkey) {
+        log(&format!(
+            "kunde inte registrera {}: {e}",
+            cfg.continuous_hotkey
+        ));
+    }
 
     // Händelsestyrt i stället för polling: hotkey- och menyhändelser
     // skickas in i event-loopen via proxyn, så loopen kan sova (Wait)
@@ -264,8 +297,9 @@ fn run() -> Result<()> {
     let update_proxy = event_loop.create_proxy();
 
     log(&format!(
-        "Redo. Håll {} och prata; släpp för att skriva texten.",
-        cfg.hotkey
+        "Redo. Håll {} och prata; släpp för att skriva texten. \
+         {} togglar kontinuerligt läge.",
+        cfg.hotkey, cfg.continuous_hotkey
     ));
 
     let mut cur_state = AppState::Loading;
@@ -304,7 +338,18 @@ fn run() -> Result<()> {
                 available_update = Some(tag);
             }
             UserEvent::Hotkey(e) => {
-                if e.id == hotkey.id() {
+                if e.id == vad_hotkey.id() {
+                    if e.state == HotKeyState::Pressed {
+                        cfg.continuous = !cfg.continuous;
+                        continuous_item.set_checked(cfg.continuous);
+                        let _ = cmd_tx.send(Cmd::SetContinuous(cfg.continuous));
+                        if let Err(e) = cfg.save() {
+                            log(&format!("kunde inte spara konfigurationen: {e}"));
+                        }
+                        play_toggle_sound(&cfg, &sound_volume, cfg.continuous);
+                    }
+                } else if e.id == hotkey.id() && !cfg.continuous {
+                    // PTT-knappen ignoreras medan kontinuerligt läge är på.
                     match e.state {
                         HotKeyState::Pressed => {
                             let _ = cmd_tx.send(Cmd::StartRecording);
@@ -313,6 +358,13 @@ fn run() -> Result<()> {
                             let _ = cmd_tx.send(Cmd::StopAndTranscribe);
                         }
                     }
+                }
+            }
+            UserEvent::ContinuousOff => {
+                cfg.continuous = false;
+                continuous_item.set_checked(false);
+                if let Err(e) = cfg.save() {
+                    log(&format!("kunde inte spara konfigurationen: {e}"));
                 }
             }
             UserEvent::Menu(e) => {
@@ -347,6 +399,14 @@ fn run() -> Result<()> {
                     if let Err(e) = cfg.save() {
                         log(&format!("kunde inte spara konfigurationen: {e}"));
                     }
+                } else if e.id == continuous_item.id() {
+                    cfg.continuous = !cfg.continuous;
+                    continuous_item.set_checked(cfg.continuous);
+                    let _ = cmd_tx.send(Cmd::SetContinuous(cfg.continuous));
+                    if let Err(e) = cfg.save() {
+                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    }
+                    play_toggle_sound(&cfg, &sound_volume, cfg.continuous);
                 } else if e.id == update_item.id() {
                     if available_update.is_some() {
                         // Ny version känd: öppna nedladdningssidan direkt.
@@ -417,30 +477,67 @@ fn run() -> Result<()> {
                 } else if let Some((_, name)) =
                     key_items.iter().find(|(item, _)| e.id == *item.id())
                 {
-                    match name.parse::<HotKey>() {
-                        Ok(new_hotkey) => {
-                            let _ = hotkey_manager.unregister(hotkey);
-                            match hotkey_manager.register(new_hotkey) {
-                                Ok(()) => {
-                                    hotkey = new_hotkey;
-                                    cfg.hotkey = name.clone();
-                                    if let Err(e) = cfg.save() {
-                                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    if *name == cfg.continuous_hotkey {
+                        warn_key_taken(name);
+                    } else {
+                        match name.parse::<HotKey>() {
+                            Ok(new_hotkey) => {
+                                let _ = hotkey_manager.unregister(hotkey);
+                                match hotkey_manager.register(new_hotkey) {
+                                    Ok(()) => {
+                                        hotkey = new_hotkey;
+                                        cfg.hotkey = name.clone();
+                                        if let Err(e) = cfg.save() {
+                                            log(&format!("kunde inte spara konfigurationen: {e}"));
+                                        }
+                                        let _ = tray.set_tooltip(Some(format!(
+                                            "T-Whisper v{VERSION} — håll {} och prata",
+                                            cfg.hotkey
+                                        )));
+                                        log(&format!(
+                                            "Inspelningsknapp ändrad till {}",
+                                            cfg.hotkey
+                                        ));
                                     }
-                                    let _ = tray.set_tooltip(Some(format!(
-                                        "T-Whisper v{VERSION} — håll {} och prata",
-                                        cfg.hotkey
-                                    )));
-                                    log(&format!("Inspelningsknapp ändrad till {}", cfg.hotkey));
-                                }
-                                Err(e) => {
-                                    log(&format!("kunde inte registrera {name}: {e}"));
-                                    // Återta den gamla tangenten så appen inte blir döv.
-                                    let _ = hotkey_manager.register(hotkey);
+                                    Err(e) => {
+                                        log(&format!("kunde inte registrera {name}: {e}"));
+                                        // Återta den gamla tangenten så appen inte blir döv.
+                                        let _ = hotkey_manager.register(hotkey);
+                                    }
                                 }
                             }
+                            Err(e) => log(&format!("ogiltig tangent {name}: {e:?}")),
                         }
-                        Err(e) => log(&format!("ogiltig tangent {name}: {e:?}")),
+                    }
+                } else if let Some((_, name)) =
+                    vad_key_items.iter().find(|(item, _)| e.id == *item.id())
+                {
+                    if *name == cfg.hotkey {
+                        warn_key_taken(name);
+                    } else {
+                        match name.parse::<HotKey>() {
+                            Ok(new_hotkey) => {
+                                let _ = hotkey_manager.unregister(vad_hotkey);
+                                match hotkey_manager.register(new_hotkey) {
+                                    Ok(()) => {
+                                        vad_hotkey = new_hotkey;
+                                        cfg.continuous_hotkey = name.clone();
+                                        if let Err(e) = cfg.save() {
+                                            log(&format!("kunde inte spara konfigurationen: {e}"));
+                                        }
+                                        log(&format!(
+                                            "Aktiveringsknapp för kontinuerligt läge ändrad till {}",
+                                            cfg.continuous_hotkey
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        log(&format!("kunde inte registrera {name}: {e}"));
+                                        let _ = hotkey_manager.register(vad_hotkey);
+                                    }
+                                }
+                            }
+                            Err(e) => log(&format!("ogiltig tangent {name}: {e:?}")),
+                        }
                     }
                 } else if let Some((_, vol)) = vol_items.iter().find(|(item, _)| e.id == *item.id())
                 {
@@ -457,6 +554,9 @@ fn run() -> Result<()> {
                 // Synka bockarna i menyn med aktuell konfiguration.
                 for (item, name) in &key_items {
                     item.set_checked(*name == cfg.hotkey);
+                }
+                for (item, name) in &vad_key_items {
+                    item.set_checked(*name == cfg.continuous_hotkey);
                 }
                 for (item, vol) in &vol_items {
                     item.set_checked((cfg.sound_volume - vol).abs() < 0.05);
@@ -545,10 +645,118 @@ fn controller(
 
     let _ = proxy.send_event(UserEvent::State(AppState::Idle));
 
+    // Förhistorik som behålls före upptäckt talstart (~1 s vid 16 kHz),
+    // så att första stavelsen inte klipps bort.
+    const PRE_ROLL_SAMPLES: usize = 16_000;
+    // Tvångsklipp yttranden längre än så här (whisper arbetar i
+    // 30-sekundersfönster).
+    const MAX_UTTERANCE_MS: u32 = 30_000;
+
     let mut recording = false;
-    for cmd in rx {
+    let mut continuous_on = false;
+    let mut vad: Option<vad::Vad> = None;
+    let mut gate = vad::SpeechGate::new(cfg.vad_silence_ms.max(200), MAX_UTTERANCE_MS);
+    let mut buf: Vec<f32> = Vec::new();
+
+    // Läget kan vara på redan från konfigen.
+    if cfg.continuous {
+        continuous_on =
+            activate_continuous(&cfg, &mut vad, &mut recorder, &mut gate, &mut buf, &proxy);
+    }
+
+    loop {
+        // I kontinuerligt läge pollas mikrofonen var 150:e ms; annars
+        // blockerar tråden tills ett kommando kommer (0 % CPU i vila).
+        let cmd = if continuous_on {
+            match rx.recv_timeout(std::time::Duration::from_millis(150)) {
+                Ok(c) => Some(c),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(c) => Some(c),
+                Err(_) => break,
+            }
+        };
+
+        let Some(cmd) = cmd else {
+            // Tick: töm mikrofonbufferten och låt VAD-grinden avgöra.
+            if recorder.failed() {
+                log("mikrofonströmmen har fallit — bygger om mot aktuell enhet");
+                match audio::Recorder::new(mic_level.clone(), wanted_mic(&mic_name)) {
+                    Ok(r) => {
+                        recorder = r;
+                        recorder.start();
+                        buf.clear();
+                        gate.reset();
+                    }
+                    Err(e) => log(&format!("kunde inte öppna mikrofonen: {e}")),
+                }
+                continue;
+            }
+            let chunk = recorder.drain();
+            let chunk_ms = if chunk.is_empty() {
+                150
+            } else {
+                (chunk.len() / 16) as u32
+            };
+            // Silero behöver minst ett analysfönster (512 sampel).
+            let speech =
+                chunk.len() >= 512 && vad.as_mut().map(|v| v.is_speech(&chunk)).unwrap_or(false);
+            buf.extend_from_slice(&chunk);
+            match gate.push(speech, chunk_ms) {
+                vad::GateEvent::None => {
+                    // Under tystnad: behåll bara den senaste förhistoriken.
+                    if !gate.speaking() && buf.len() > PRE_ROLL_SAMPLES {
+                        let cut = buf.len() - PRE_ROLL_SAMPLES;
+                        buf.drain(..cut);
+                    }
+                }
+                vad::GateEvent::SpeechStarted => {
+                    let _ = proxy.send_event(UserEvent::State(AppState::Recording));
+                }
+                ev @ (vad::GateEvent::UtteranceEnded | vad::GateEvent::ForcedCut) => {
+                    let _ = proxy.send_event(UserEvent::State(AppState::Working));
+                    let samples = std::mem::take(&mut buf);
+                    handle_utterance(
+                        &samples,
+                        &mut transcriber,
+                        &mut enigo,
+                        &cfg,
+                        &shift_enter,
+                        &digits,
+                    );
+                    let next = if ev == vad::GateEvent::ForcedCut {
+                        AppState::Recording
+                    } else {
+                        AppState::Idle
+                    };
+                    let _ = proxy.send_event(UserEvent::State(next));
+                }
+            }
+            continue;
+        };
+
         match cmd {
-            Cmd::StartRecording if !recording => {
+            Cmd::SetContinuous(true) if !continuous_on => {
+                // Avbryt ev. pågående PTT-inspelning först.
+                if recording {
+                    recording = false;
+                    let _ = recorder.stop();
+                }
+                continuous_on =
+                    activate_continuous(&cfg, &mut vad, &mut recorder, &mut gate, &mut buf, &proxy);
+            }
+            Cmd::SetContinuous(false) if continuous_on => {
+                continuous_on = false;
+                let _ = recorder.stop();
+                buf.clear();
+                gate.reset();
+                let _ = proxy.send_event(UserEvent::State(AppState::Idle));
+                log("kontinuerligt läge av");
+            }
+            Cmd::StartRecording if !recording && !continuous_on => {
                 // Föll mikrofonströmmen (t.ex. headset avstängt) byggs
                 // inspelaren om mot nuvarande standardenhet.
                 if recorder.failed() {
@@ -577,30 +785,14 @@ fn controller(
                 }
                 let _ = proxy.send_event(UserEvent::State(AppState::Working));
                 let samples = recorder.stop();
-                // Ignorera tryck kortare än ~0,25 s.
-                if samples.len() >= 4_000 {
-                    let t = std::time::Instant::now();
-                    match transcriber.transcribe(&samples, digits.load(Ordering::Relaxed)) {
-                        Ok(text) if !text.is_empty() => {
-                            log(&format!("[{:.2} s] {text}", t.elapsed().as_secs_f32()));
-                            let out = if cfg.append_space {
-                                format!("{text} ")
-                            } else {
-                                text
-                            };
-                            if let Err(e) = insert_text(&mut enigo, &out, cfg.paste) {
-                                log(&format!("kunde inte skriva texten: {e}"));
-                            } else if shift_enter.load(Ordering::Relaxed) {
-                                // Ny rad efter dikteringen (mjuk radbrytning).
-                                let _ = enigo.key(Key::Shift, Direction::Press);
-                                let _ = enigo.key(Key::Return, Direction::Click);
-                                let _ = enigo.key(Key::Shift, Direction::Release);
-                            }
-                        }
-                        Ok(_) => log("(inget tal uppfattades)"),
-                        Err(e) => log(&format!("transkriberingsfel: {e}")),
-                    }
-                }
+                handle_utterance(
+                    &samples,
+                    &mut transcriber,
+                    &mut enigo,
+                    &cfg,
+                    &shift_enter,
+                    &digits,
+                );
                 let _ = proxy.send_event(UserEvent::State(AppState::Idle));
             }
             Cmd::SetMicrophone(name) => {
@@ -612,13 +804,131 @@ fn controller(
                 }
                 mic_name = name;
                 match audio::Recorder::new(mic_level.clone(), wanted_mic(&mic_name)) {
-                    Ok(r) => recorder = r,
+                    Ok(r) => {
+                        recorder = r;
+                        // I kontinuerligt läge ska nya enheten lyssna direkt.
+                        if continuous_on {
+                            recorder.start();
+                            buf.clear();
+                            gate.reset();
+                        }
+                    }
                     Err(e) => log(&format!("kunde inte öppna mikrofonen: {e}")),
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Laddar VAD-modellen (vid behov) och startar lyssningen. Returnerar
+/// true om läget kunde aktiveras; annars loggas felet, en varning visas
+/// och menybocken återställs via [`UserEvent::ContinuousOff`].
+fn activate_continuous(
+    cfg: &config::Config,
+    vad: &mut Option<vad::Vad>,
+    recorder: &mut audio::Recorder,
+    gate: &mut vad::SpeechGate,
+    buf: &mut Vec<f32>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> bool {
+    if vad.is_none() {
+        let loaded = model::ensure_vad_model().and_then(|p| {
+            vad::Vad::new(
+                p.to_str().context("ogiltig sökväg till VAD-modellen")?,
+                cfg.vad_threshold,
+            )
+        });
+        match loaded {
+            Ok(v) => *vad = Some(v),
+            Err(e) => {
+                log(&format!("kunde inte aktivera kontinuerligt läge: {e:#}"));
+                let _ = proxy.send_event(UserEvent::ContinuousOff);
+                std::thread::spawn(move || {
+                    winutil::message_box(
+                        "T-Whisper – kontinuerligt läge",
+                        &format!(
+                            "Kunde inte aktivera kontinuerligt läge:\n{e:#}\n\n\
+                             Kontrollera internetanslutningen och försök igen."
+                        ),
+                        winutil::MB_ICONWARNING,
+                    );
+                });
+                return false;
+            }
+        }
+    }
+    gate.reset();
+    buf.clear();
+    recorder.start();
+    log("kontinuerligt läge på — lyssnar");
+    let _ = proxy.send_event(UserEvent::State(AppState::Idle));
+    true
+}
+
+/// Transkriberar ett färdigt yttrande och skriver in texten vid markören.
+/// Gemensam för push-to-talk och kontinuerligt läge. Yttranden kortare
+/// än ~0,25 s ignoreras.
+fn handle_utterance(
+    samples: &[f32],
+    transcriber: &mut transcribe::Transcriber,
+    enigo: &mut Enigo,
+    cfg: &config::Config,
+    shift_enter: &AtomicBool,
+    digits: &AtomicBool,
+) {
+    if samples.len() < 4_000 {
+        return;
+    }
+    let t = std::time::Instant::now();
+    match transcriber.transcribe(samples, digits.load(Ordering::Relaxed)) {
+        Ok(text) if !text.is_empty() => {
+            log(&format!("[{:.2} s] {text}", t.elapsed().as_secs_f32()));
+            let out = if cfg.append_space {
+                format!("{text} ")
+            } else {
+                text
+            };
+            if let Err(e) = insert_text(enigo, &out, cfg.paste) {
+                log(&format!("kunde inte skriva texten: {e}"));
+            } else if shift_enter.load(Ordering::Relaxed) {
+                // Ny rad efter dikteringen (mjuk radbrytning).
+                let _ = enigo.key(Key::Shift, Direction::Press);
+                let _ = enigo.key(Key::Return, Direction::Click);
+                let _ = enigo.key(Key::Shift, Direction::Release);
+            }
+        }
+        Ok(_) => log("(inget tal uppfattades)"),
+        Err(e) => log(&format!("transkriberingsfel: {e}")),
+    }
+}
+
+/// Klick (på) eller pling (av) när kontinuerligt läge togglas.
+fn play_toggle_sound(cfg: &config::Config, sound_volume: &AtomicU32, on: bool) {
+    let vol = f32::from_bits(sound_volume.load(Ordering::Relaxed));
+    if cfg.sounds && vol > 0.0 {
+        if on {
+            sound::play(300.0, 60, START_SOUND_GAIN * vol);
+        } else {
+            sound::play(880.0, 140, STOP_SOUND_GAIN * vol);
+        }
+    }
+}
+
+/// Varnar när användaren försöker ge två funktioner samma tangent.
+/// Egen tråd så att meddelanderutan inte blockerar event-loopen.
+fn warn_key_taken(key: &str) {
+    let key = key.to_string();
+    std::thread::spawn(move || {
+        winutil::message_box(
+            "T-Whisper",
+            &format!(
+                "{key} används redan av den andra funktionen.\n\
+                 Välj en annan tangent."
+            ),
+            winutil::MB_ICONWARNING,
+        );
+    });
 }
 
 /// Visar en Om-ruta med version, projektinfo och GitHub-länk.

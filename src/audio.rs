@@ -178,6 +178,12 @@ impl Recorder {
     /// (whispers indataformat).
     pub fn stop(&mut self) -> Vec<f32> {
         self.active.store(false, Ordering::Relaxed);
+        self.drain()
+    }
+
+    /// Tömmer det som buffrats hittills (16 kHz mono f32) utan att stoppa
+    /// buffringen — används av kontinuerligt läge som pollar chunkvis.
+    pub fn drain(&mut self) -> Vec<f32> {
         let mut raw = Vec::with_capacity(self.consumer.slots());
         while let Ok(s) = self.consumer.pop() {
             raw.push(s);

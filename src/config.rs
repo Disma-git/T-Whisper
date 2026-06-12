@@ -21,6 +21,14 @@ pub struct Config {
     pub digits: bool,
     /// Mikrofon (enhetens namn); tom sträng = Windows standardenhet
     pub microphone: String,
+    /// Kontinuerligt läge (auto-lyssning med VAD) på vid start
+    pub continuous: bool,
+    /// Tangent som slår på/av kontinuerligt läge
+    pub continuous_hotkey: String,
+    /// VAD: talsannolikhetströskel 0.0–1.0 (högre = mindre känslig)
+    pub vad_threshold: f32,
+    /// VAD: tystnad i millisekunder som avslutar ett yttrande
+    pub vad_silence_ms: u32,
     /// Kolla efter ny version på GitHub vid start
     pub update_check: bool,
     /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
@@ -40,6 +48,10 @@ impl Default for Config {
             shift_enter: false,
             digits: false,
             microphone: String::new(),
+            continuous: false,
+            continuous_hotkey: "F10".into(),
+            vad_threshold: 0.5,
+            vad_silence_ms: 800,
             update_check: true,
             sounds: true,
             sound_volume: 0.5,
@@ -148,6 +160,27 @@ append_space = {append_space}
 #          tecken i vissa program, men funkar där Ctrl+V inte gör det)
 paste = {paste}
 
+# --------------------------------------------------------------
+#  Kontinuerligt läge (auto-lyssning): appen lyssnar hela tiden och
+#  transkriberar automatiskt när tal följt av tystnad upptäcks —
+#  ingen tangent behöver hållas. Slås enklast på/av med tangenten
+#  nedan eller via systemfältsmenyn -> Kontinuerligt läge.
+#  En liten VAD-modell (<1 MB) laddas ner första gången.
+continuous = {continuous}
+
+#  Tangent som slår på/av kontinuerligt läge (samma format som
+#  hotkey ovan; får inte vara samma tangent).
+continuous_hotkey = "{continuous_hotkey}"
+
+#  Talsannolikhetströskel 0.0–1.0: högre värde = mindre känslig
+#  (bra mot bakgrundsljud), lägre = fångar svagare tal.
+vad_threshold = {vad_threshold}
+
+#  Tystnad i millisekunder som avslutar ett yttrande. Kortare
+#  pauser än så räknas som en del av samma mening.
+vad_silence_ms = {vad_silence_ms}
+
+# --------------------------------------------------------------
 #  true = skicka Shift+Enter efter varje diktering, så att varje
 #  mening hamnar på en ny rad (praktiskt i t.ex. Anteckningar).
 #  Kan även slås av/på i systemfältsmenyn.
@@ -181,6 +214,10 @@ update_check = {update_check}
             shift_enter = self.shift_enter,
             digits = self.digits,
             microphone = self.microphone,
+            continuous = self.continuous,
+            continuous_hotkey = self.continuous_hotkey,
+            vad_threshold = self.vad_threshold,
+            vad_silence_ms = self.vad_silence_ms,
             update_check = self.update_check,
             sound_volume = self.sound_volume,
             sounds = self.sounds,
