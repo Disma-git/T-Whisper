@@ -19,6 +19,10 @@ pub struct Config {
     pub shift_enter: bool,
     /// Skriv tal som siffror ("tjugofem" -> "25")
     pub digits: bool,
+    /// Mikrofon (enhetens namn); tom sträng = Windows standardenhet
+    pub microphone: String,
+    /// Kolla efter ny version på GitHub vid start
+    pub update_check: bool,
     /// Ljudfeedback: dovt klick vid inspelningsstart, pling vid släpp
     pub sounds: bool,
     /// Volym för feedbackljuden, 0.0–1.0
@@ -35,6 +39,8 @@ impl Default for Config {
             paste: true,
             shift_enter: false,
             digits: false,
+            microphone: String::new(),
+            update_check: true,
             sounds: true,
             sound_volume: 0.5,
         }
@@ -126,6 +132,11 @@ model = "{model}"
 #  Talspråk (ISO-kod): "sv" = svenska, "en" = engelska, osv.
 language = "{language}"
 
+#  Mikrofon: enhetens namn, t.ex. "Mikrofon (Arctis Nova Pro Wireless)".
+#  Tom sträng = följ Windows standardenhet. Enklast att byta via
+#  systemfältsmenyn -> Mikrofon.
+microphone = "{microphone}"
+
 # --------------------------------------------------------------
 #  true = lägg till ett blanksteg efter varje inskriven mening,
 #  praktiskt när man dikterar flera meningar i rad.
@@ -156,6 +167,11 @@ sounds = {sounds}
 #  Volym för feedbackljuden, 0.0 (tyst) till 1.0 (max).
 #  Kan även ändras i systemfältsmenyn under "Ljudvolym".
 sound_volume = {sound_volume}
+
+# --------------------------------------------------------------
+#  true = kolla vid start om en ny version finns på GitHub
+#  (endast en förfrågan om versionsnummer; inget laddas ner).
+update_check = {update_check}
 "#,
             hotkey = self.hotkey,
             model = self.model,
@@ -164,6 +180,8 @@ sound_volume = {sound_volume}
             paste = self.paste,
             shift_enter = self.shift_enter,
             digits = self.digits,
+            microphone = self.microphone,
+            update_check = self.update_check,
             sound_volume = self.sound_volume,
             sounds = self.sounds,
         )

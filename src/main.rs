@@ -6,6 +6,7 @@ mod model;
 mod numbers;
 mod sound;
 mod transcribe;
+mod update;
 mod winutil;
 
 use anyhow::{Context, Result};
@@ -39,6 +40,8 @@ const LEVEL_STEPS: usize = 8;
 enum Cmd {
     StartRecording,
     StopAndTranscribe,
+    /// Byt mikrofon; tom sträng = Windows standardenhet.
+    SetMicrophone(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,6 +58,8 @@ enum UserEvent {
     Level(usize),
     Hotkey(GlobalHotKeyEvent),
     Menu(MenuEvent),
+    /// En nyare version (taggen) finns på GitHub.
+    UpdateAvailable(String),
 }
 
 fn main() {
@@ -165,6 +170,21 @@ fn run() -> Result<()> {
         key_items.push((item, name.to_string()));
     }
     menu.append(&hotkey_submenu)?;
+    // Mikrofonval: "Systemstandard" + enheterna som fanns vid appstart.
+    let mic_submenu = Submenu::new("Mikrofon", true);
+    let mut mic_items: Vec<(CheckMenuItem, String)> = Vec::new();
+    {
+        let default_item =
+            CheckMenuItem::new("Systemstandard", true, cfg.microphone.is_empty(), None);
+        mic_submenu.append(&default_item)?;
+        mic_items.push((default_item, String::new()));
+        for name in audio::input_device_names() {
+            let item = CheckMenuItem::new(&name, true, cfg.microphone == name, None);
+            mic_submenu.append(&item)?;
+            mic_items.push((item, name));
+        }
+    }
+    menu.append(&mic_submenu)?;
     let volume_submenu = Submenu::new("Ljudvolym", true);
     let mut vol_items: Vec<(CheckMenuItem, f32)> = Vec::new();
     for (name, vol) in VOLUME_CHOICES {
@@ -190,6 +210,8 @@ fn run() -> Result<()> {
     menu.append(&about_item)?;
     let github_item = MenuItem::new("Öppna GitHub-sidan", true, None);
     menu.append(&github_item)?;
+    let update_item = MenuItem::new("Sök efter uppdateringar", true, None);
+    menu.append(&update_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
     let quit_item = MenuItem::new("Avsluta", true, None);
     menu.append(&quit_item)?;
@@ -222,6 +244,25 @@ fn run() -> Result<()> {
         }));
     }
 
+    // Tyst uppdateringskoll en stund efter start (kan stängas av i konfigen).
+    if cfg.update_check {
+        let proxy = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            match update::fetch_latest_tag() {
+                Ok(tag) if update::is_newer(&tag, VERSION) => {
+                    log(&format!("ny version finns på GitHub: {tag}"));
+                    let _ = proxy.send_event(UserEvent::UpdateAvailable(tag));
+                }
+                Ok(tag) => log(&format!(
+                    "uppdateringskoll: {tag} är senaste — du kör v{VERSION}"
+                )),
+                Err(e) => log(&format!("uppdateringskollen misslyckades: {e}")),
+            }
+        });
+    }
+    let update_proxy = event_loop.create_proxy();
+
     log(&format!(
         "Redo. Håll {} och prata; släpp för att skriva texten.",
         cfg.hotkey
@@ -229,6 +270,7 @@ fn run() -> Result<()> {
 
     let mut cur_state = AppState::Loading;
     let mut cur_step = 0usize;
+    let mut available_update: Option<String> = None;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -253,6 +295,13 @@ fn run() -> Result<()> {
                     cur_step = step.min(LEVEL_STEPS);
                     let _ = tray.set_icon(Some(icons[state_index(cur_state)][cur_step].clone()));
                 }
+            }
+            UserEvent::UpdateAvailable(tag) => {
+                update_item.set_text(format!("Hämta {tag} — ny version!"));
+                let _ = tray.set_tooltip(Some(format!(
+                    "T-Whisper v{VERSION} — ny version ({tag}) finns på GitHub"
+                )));
+                available_update = Some(tag);
             }
             UserEvent::Hotkey(e) => {
                 if e.id == hotkey.id() {
@@ -298,6 +347,63 @@ fn run() -> Result<()> {
                     if let Err(e) = cfg.save() {
                         log(&format!("kunde inte spara konfigurationen: {e}"));
                     }
+                } else if e.id == update_item.id() {
+                    if available_update.is_some() {
+                        // Ny version känd: öppna nedladdningssidan direkt.
+                        if let Err(err) = std::process::Command::new("explorer")
+                            .arg(format!("{REPO_URL}/releases/latest"))
+                            .current_dir(config::config_dir())
+                            .spawn()
+                        {
+                            log(&format!("kunde inte öppna releases-sidan: {err}"));
+                        }
+                    } else {
+                        // Manuell koll i egen tråd så att loopen inte blockeras.
+                        let proxy = update_proxy.clone();
+                        std::thread::spawn(move || match update::fetch_latest_tag() {
+                            Ok(tag) if update::is_newer(&tag, VERSION) => {
+                                let _ = proxy.send_event(UserEvent::UpdateAvailable(tag.clone()));
+                                winutil::message_box(
+                                    "T-Whisper – uppdatering",
+                                    &format!(
+                                        "Ny version finns: {tag} (du kör v{VERSION}).\n\n\
+                                         Välj \"Hämta {tag}\" i menyn för att öppna \
+                                         nedladdningssidan."
+                                    ),
+                                    winutil::MB_ICONINFORMATION,
+                                );
+                            }
+                            Ok(_) => winutil::message_box(
+                                "T-Whisper – uppdatering",
+                                &format!("Du kör senaste versionen (v{VERSION})."),
+                                winutil::MB_ICONINFORMATION,
+                            ),
+                            Err(e) => {
+                                log(&format!("uppdateringskollen misslyckades: {e}"));
+                                winutil::message_box(
+                                    "T-Whisper – uppdatering",
+                                    &format!("Kunde inte nå GitHub:\n{e}"),
+                                    winutil::MB_ICONWARNING,
+                                );
+                            }
+                        });
+                    }
+                } else if let Some((_, name)) =
+                    mic_items.iter().find(|(item, _)| e.id == *item.id())
+                {
+                    cfg.microphone = name.clone();
+                    let _ = cmd_tx.send(Cmd::SetMicrophone(name.clone()));
+                    if let Err(e) = cfg.save() {
+                        log(&format!("kunde inte spara konfigurationen: {e}"));
+                    }
+                    log(&format!(
+                        "Mikrofon vald: {}",
+                        if name.is_empty() {
+                            "systemstandard"
+                        } else {
+                            name
+                        }
+                    ));
                 } else if e.id == about_item.id() {
                     show_about();
                 } else if e.id == github_item.id() {
@@ -355,6 +461,9 @@ fn run() -> Result<()> {
                 for (item, vol) in &vol_items {
                     item.set_checked((cfg.sound_volume - vol).abs() < 0.05);
                 }
+                for (item, name) in &mic_items {
+                    item.set_checked(*name == cfg.microphone);
+                }
             }
         }
     });
@@ -393,7 +502,8 @@ fn controller(
             return;
         }
     };
-    let mut recorder = match audio::Recorder::new(mic_level.clone()) {
+    let mut mic_name = cfg.microphone.clone();
+    let mut recorder = match audio::Recorder::new(mic_level.clone(), wanted_mic(&mic_name)) {
         Ok(r) => r,
         Err(e) => {
             fail(
@@ -443,7 +553,7 @@ fn controller(
                 // inspelaren om mot nuvarande standardenhet.
                 if recorder.failed() {
                     log("mikrofonströmmen har fallit — bygger om mot aktuell enhet");
-                    match audio::Recorder::new(mic_level.clone()) {
+                    match audio::Recorder::new(mic_level.clone(), wanted_mic(&mic_name)) {
                         Ok(r) => recorder = r,
                         Err(e) => {
                             log(&format!("kunde inte öppna mikrofonen: {e}"));
@@ -492,6 +602,19 @@ fn controller(
                     }
                 }
                 let _ = proxy.send_event(UserEvent::State(AppState::Idle));
+            }
+            Cmd::SetMicrophone(name) => {
+                // Avbryt ev. pågående inspelning innan bytet.
+                if recording {
+                    recording = false;
+                    let _ = recorder.stop();
+                    let _ = proxy.send_event(UserEvent::State(AppState::Idle));
+                }
+                mic_name = name;
+                match audio::Recorder::new(mic_level.clone(), wanted_mic(&mic_name)) {
+                    Ok(r) => recorder = r,
+                    Err(e) => log(&format!("kunde inte öppna mikrofonen: {e}")),
+                }
             }
             _ => {}
         }
@@ -547,6 +670,15 @@ fn insert_text(enigo: &mut Enigo, text: &str, paste: bool) -> Result<()> {
         let _ = clipboard.set_text(prev);
     }
     Ok(())
+}
+
+/// Tom mikrofonsträng i konfigen betyder Windows standardenhet.
+fn wanted_mic(name: &str) -> Option<&str> {
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn state_index(state: AppState) -> usize {

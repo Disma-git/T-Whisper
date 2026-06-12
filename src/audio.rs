@@ -56,13 +56,35 @@ fn pick_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig> {
     Ok(device.default_input_config()?)
 }
 
+/// Namnen på alla tillgängliga inspelningsenheter (för menyvalet).
+pub fn input_device_names() -> Vec<String> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default()
+}
+
 impl Recorder {
     /// `level` matas kontinuerligt med mikrofonens toppnivå (även när
     /// inspelning inte pågår) så att UI:t kan visa en nivåmätare.
-    pub fn new(level: Arc<AtomicU32>) -> Result<Self> {
+    /// `device_name` väljer en specifik mikrofon; None (eller okänt namn,
+    /// t.ex. ett urkopplat headset) ger Windows standardenhet.
+    pub fn new(level: Arc<AtomicU32>, device_name: Option<&str>) -> Result<Self> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
+        let device = device_name
+            .and_then(|wanted| {
+                let found = host
+                    .input_devices()
+                    .ok()?
+                    .find(|d| d.name().map(|n| n == wanted).unwrap_or(false));
+                if found.is_none() {
+                    crate::winutil::log(&format!(
+                        "mikrofonen \"{wanted}\" hittades inte — använder standardenheten"
+                    ));
+                }
+                found
+            })
+            .or_else(|| host.default_input_device())
             .ok_or_else(|| anyhow!("ingen mikrofon hittades"))?;
         let supported = pick_config(&device)?;
         let sample_rate = supported.sample_rate().0;
