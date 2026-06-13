@@ -7,6 +7,14 @@ Snabb, lätt push-to-talk-diktering för Windows 11 på **svenska**. Håll en ta
 
 Bygger på [whisper.cpp](https://github.com/ggml-org/whisper.cpp) och Kungliga bibliotekets [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-small) — en Whisper-modell tränad på 50 000 timmar svenskt tal med ~47 % färre fel än OpenAI:s Whisper på svenska. Skrivet i Rust; med CUDA-bygget transkriberas ett normalt yttrande på ~0,2 s (RTX 5080).
 
+## Varför T-Whisper?
+
+De flesta dikteringstjänster skickar din röst till molnet. T-Whisper gör tvärtom — **allt körs lokalt på din egen dator**:
+
+- **Taligenkänningsmodellen körs på din maskin.** KB-Whisper laddas ner en gång (~170 MB) från Hugging Face; därefter behövs ingen internetanslutning för att diktera. Inget ljud och ingen text lämnar någonsin datorn.
+- **Så litet och lätt som möjligt.** En enda exe-fil i systemfältet — ingen webview, ingen Electron, ingen Python-miljö, inga bakgrundstjänster. Programmet är händelsestyrt och drar ~0 % CPU när du inte dikterar; modellen hålls laddad i GPU-minnet så att svaret kommer direkt utan uppstartsfördröjning.
+- **Inga konton, ingen telemetri.** Den enda nätverkstrafiken efter modellnedladdningen är en frivillig versionskoll mot GitHub (kan stängas av i konfigurationen).
+
 ## Funktioner
 
 - **Push-to-talk**: håll F9 (konfigurerbart), släpp för att transkribera
