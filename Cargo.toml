@@ -9,8 +9,9 @@ build = "build.rs"
 
 [features]
 default = []
-cuda = ["whisper-rs/cuda"]
+cuda = ["whisper-rs/cuda", "parakeet-rs/cuda"]
 vulkan = ["whisper-rs/vulkan"]
+directml = ["parakeet-rs/directml"]
 
 [dependencies]
 anyhow = "1"
@@ -19,6 +20,7 @@ cpal = "0.15"
 dirs = "5"
 enigo = "0.2"
 global-hotkey = "0.6"
+parakeet-rs = "0.3.6"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rtrb = "0.3"
 serde = { version = "1", features = ["derive"] }

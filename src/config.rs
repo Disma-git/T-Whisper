@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub struct Config {
     /// Push-to-talk-tangent, t.ex. "F9" eller "ctrl+shift+KeyD"
     pub hotkey: String,
+    /// Transkriberingsmotor: "whisper" (KB-Whisper, standard) | "nemotron"
+    pub engine: String,
     /// KB-Whisper-modell: tiny | base | small | medium | large
     pub model: String,
     /// Språkkod för transkribering
@@ -41,6 +43,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             hotkey: "F9".into(),
+            engine: "whisper".into(),
             model: "small".into(),
             language: "sv".into(),
             append_space: true,
@@ -128,7 +131,17 @@ impl Config {
 hotkey = "{hotkey}"
 
 # --------------------------------------------------------------
-#  KB-Whisper-modell. Byter du modell laddas den ner automatiskt
+#  Transkriberingsmotor:
+#    "whisper"  = KB-Whisper via whisper.cpp (standard) — specialtränad
+#                 på svenska, modellstorlek väljs med "model" nedan.
+#    "nemotron" = NVIDIA Nemotron 3.5 ASR (flerspråkig streaming-modell)
+#                 via ONNX Runtime. ONNX-filerna (~2,5 GB) laddas ner
+#                 automatiskt första gången. "model" nedan används inte.
+engine = "{engine}"
+
+# --------------------------------------------------------------
+#  KB-Whisper-modell (gäller engine = "whisper"). Byter du modell
+#  laddas den ner automatiskt
 #  från Hugging Face vid nästa start och sparas i
 #  %APPDATA%\T-Whisper\models. Större modell = bättre kvalitet,
 #  men långsammare och mer minne:
@@ -207,6 +220,7 @@ sound_volume = {sound_volume}
 update_check = {update_check}
 "#,
             hotkey = self.hotkey,
+            engine = self.engine,
             model = self.model,
             language = self.language,
             append_space = self.append_space,
