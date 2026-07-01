@@ -7,6 +7,7 @@ pub const MB_ICONINFORMATION: u32 = 0x40;
 pub const MB_ICONWARNING: u32 = 0x30;
 pub const MB_ICONERROR: u32 = 0x10;
 
+#[cfg(windows)]
 #[repr(C)]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 struct SYSTEMTIME {
@@ -20,11 +21,13 @@ struct SYSTEMTIME {
     wMilliseconds: u16,
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, utype: u32) -> i32;
 }
 
+#[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
     fn CreateMutexW(
@@ -36,11 +39,13 @@ extern "system" {
     fn GetLocalTime(time: *mut SYSTEMTIME);
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Visar en meddelanderuta (blockerar tråden tills användaren klickar OK).
+#[cfg(windows)]
 pub fn message_box(title: &str, text: &str, icon: u32) {
     let text_w = wide(text);
     let title_w = wide(title);
@@ -49,8 +54,15 @@ pub fn message_box(title: &str, text: &str, icon: u32) {
     }
 }
 
+/// Utanför Windows (CI, molnbyggen): skriv till stderr i stället för ruta.
+#[cfg(not(windows))]
+pub fn message_box(title: &str, text: &str, _icon: u32) {
+    eprintln!("[{title}] {text}");
+}
+
 /// Skapar en namngiven mutex som lever lika länge som processen.
 /// Returnerar false om en annan instans redan äger den.
+#[cfg(windows)]
 pub fn ensure_single_instance() -> bool {
     const ERROR_ALREADY_EXISTS: u32 = 183;
     let name = wide("T-Whisper-single-instance-mutex");
@@ -65,6 +77,13 @@ pub fn ensure_single_instance() -> bool {
     }
 }
 
+/// Utanför Windows finns inget single-instance-skydd - släpp alltid igenom.
+#[cfg(not(windows))]
+pub fn ensure_single_instance() -> bool {
+    true
+}
+
+#[cfg(windows)]
 fn now_string() -> String {
     let mut t = SYSTEMTIME {
         wYear: 0,
@@ -81,6 +100,15 @@ fn now_string() -> String {
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
     )
+}
+
+/// Utanför Windows: sekunder sedan epoch räcker för felsökningsloggen.
+#[cfg(not(windows))]
+fn now_string() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => format!("epoch+{}s", d.as_secs()),
+        Err(_) => "okänd tid".into(),
+    }
 }
 
 /// Loggar till stderr och till %APPDATA%\T-Whisper\log.txt med tidsstämpel.
