@@ -68,6 +68,9 @@ enum UserEvent {
 }
 
 fn main() {
+    // Först av allt: annars försvinner en tidig panic spårlöst.
+    winutil::install_panic_hook();
+
     // Bara en instans åt gången: två instanser slåss annars om hotkey
     // och mikrofon, och tvåan dör tyst utan konsol.
     if !winutil::ensure_single_instance() {

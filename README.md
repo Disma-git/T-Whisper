@@ -1,4 +1,4 @@
-# T-Whisper v0.5.1
+# T-Whisper v0.5.2
 
 [![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release&cacheSeconds=3600)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
@@ -105,6 +105,7 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 | Version | Datum | Nyheter |
 |---|---|---|
+| **0.5.2** | 2026-08-15 | Panics loggas nu till `log.txt` med tråd, plats och backtrace och visar en felruta — tidigare stängdes programmet tyst utan spår (release-bygget har ingen konsol); Nemotron 3.5 ASR valbar som motor via `engine` i konfigfilen |
 | **0.5.1** | 2026-06-13 | Systemfältsikonen lyser röd hela tiden kontinuerligt läge är på (inte bara under tal), så att det syns tydligt att appen lyssnar |
 | **0.5.0** | 2026-06-13 | Kontinuerligt läge med röstaktivitetsdetektering (Silero-VAD): tryck F10 så lyssnar appen passivt och transkriberar automatiskt vid tal följt av paus; egen aktiveringsknapp valbar F1–F12 i menyn; VAD-modellen (<1 MB) laddas ner automatiskt vid första aktivering |
 | **0.4.0** | 2026-06-12 | Mikrofonval i systemfältsmenyn (valet sparas; strömmen byggs om direkt); uppdateringskoll mot GitHub Releases — tyst vid start plus menyposten "Sök efter uppdateringar" |

@@ -83,6 +83,52 @@ fn now_string() -> String {
     )
 }
 
+/// Installerar en panic-hook som skriver panicen till log.txt och visar en
+/// meddelanderuta. Utan den dör en panic tyst i release-läge (inget konsol-
+/// fönster finns, så stderr går ingenstans) — även panics i bakgrundstrådar.
+pub fn install_panic_hook() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BOX_SHOWN: AtomicBool = AtomicBool::new(false);
+
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<namnlös>");
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<okänd plats>".to_string());
+        let backtrace = std::backtrace::Backtrace::force_capture();
+
+        let payload = info.payload();
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("<okänd orsak>");
+
+        log(&format!(
+            "PANIC i tråden '{name}' vid {location}: {msg}\nBacktrace:\n{backtrace}"
+        ));
+
+        // Bara en ruta även om flera trådar panikar — annars staplas de på varandra.
+        if !BOX_SHOWN.swap(true, Ordering::SeqCst) {
+            message_box(
+                "T-Whisper – oväntat fel",
+                &format!(
+                    "Programmet stötte på ett internt fel och kan behöva startas om.\n\n\
+                     Tråd: {name}\nPlats: {location}\n\n\
+                     Fullständig information finns i:\n{}",
+                    crate::config::config_dir().join("log.txt").display()
+                ),
+                MB_ICONERROR,
+            );
+        }
+
+        default_hook(info);
+    }));
+}
+
 /// Loggar till stderr och till %APPDATA%\T-Whisper\log.txt med tidsstämpel.
 /// Enkel rotation: växer filen över ~1 MB flyttas den till log.old.txt.
 pub fn log(msg: &str) {
