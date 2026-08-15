@@ -101,6 +101,28 @@ update_check = true    # kolla efter ny version på GitHub vid start
 
 Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-Whisper\models\`. Byt till `medium` eller `large` i konfigen för högre kvalitet — de hämtas också automatiskt. Modellvalet påverkar inte om GPU används: är appen byggd med CUDA körs alla modeller på GPU, är den byggd för CPU körs alla på CPU. Med GPU är därför `large` oftast ett självklart val.
 
+## Prestanda
+
+Uppmätt på en RTX 5080 med 16,6 sekunder svenskt tal, q5_0-kvantiserade modeller, T-Whisper 0.5.3. "Transkribering" är varm körning; VRAM-siffran är nettoökningen utöver skrivbordets grundförbrukning.
+
+| Modell | Laddtid | Transkribering | VRAM |
+|---|---|---|---|
+| tiny | 0,17 s | 0,20 s | ~570 MB |
+| base | 0,17 s | 0,26 s | ~640 MB |
+| small | 0,22 s | 0,43 s | ~870 MB |
+| large | 0,69 s | 0,87 s | ~2 100 MB |
+
+På GPU är skillnaden mellan modellerna alltså liten i praktiken: `large` är drygt fyra gånger långsammare än `tiny`, men för ett normalt push-to-talk-yttrande på 3–5 sekunder handlar det om någon tiondels sekund mot några hundradelar. Har du VRAM över finns sällan skäl att välja mindre än `large`.
+
+Utan GPU ser det helt annorlunda ut — samma ljudklipp på CPU:
+
+| Modell | GPU | CPU |
+|---|---|---|
+| tiny | 0,20 s | 3,4 s |
+| large | 0,87 s | 160 s |
+
+`large` på CPU tar alltså nästan tio gånger längre tid än ljudets egen längd och är oanvändbart för diktering. Kör du CPU-bygget är `tiny` eller `base` det realistiska valet.
+
 ## Versionshistorik
 
 | Version | Datum | Nyheter |
