@@ -99,14 +99,9 @@ fn run() -> Result<()> {
     whisper_rs::install_logging_hooks();
 
     let mut cfg = config::Config::load().context("kunde inte läsa konfigurationen")?;
-    let model_desc = if cfg.engine == "nemotron" {
-        "nemotron-3.5-asr-streaming-0.6b".to_string()
-    } else {
-        format!("kb-whisper-{}", cfg.model)
-    };
     log(&format!(
-        "T-Whisper v{VERSION} startar — modell: {model_desc}, hotkey: {}",
-        cfg.hotkey
+        "T-Whisper v{VERSION} startar — modell: kb-whisper-{}, hotkey: {}",
+        cfg.model, cfg.hotkey
     ));
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Cmd>();
@@ -473,7 +468,7 @@ fn run() -> Result<()> {
                         }
                     ));
                 } else if e.id == about_item.id() {
-                    show_about(cfg.engine == "nemotron");
+                    show_about();
                 } else if e.id == github_item.id() {
                     if let Err(err) = std::process::Command::new("explorer")
                         .arg(REPO_URL)
@@ -596,25 +591,15 @@ fn controller(
 
     // Modellnedladdning och -laddning sker här så att trayikonen
     // hinner visas direkt vid start.
-    let nemotron = cfg.engine == "nemotron";
-    let ensured = if nemotron {
-        model::ensure_nemotron_model()
-    } else {
-        model::ensure_model(&cfg.model)
-    };
-    let model_path = match ensured {
+    let model_path = match model::ensure_model(&cfg.model) {
         Ok(p) => p,
         Err(e) => {
-            let name = if nemotron {
-                "nemotron-3.5-asr-streaming-0.6b".to_string()
-            } else {
-                format!("kb-whisper-{}", cfg.model)
-            };
             fail(
                 "T-Whisper – modellfel",
                 &format!(
-                    "Kunde inte hämta modellen {name}:\n{e:#}\n\n\
-                     Kontrollera internetanslutningen och starta om T-Whisper."
+                    "Kunde inte hämta modellen kb-whisper-{}:\n{e:#}\n\n\
+                     Kontrollera internetanslutningen och starta om T-Whisper.",
+                    cfg.model
                 ),
             );
             return;
@@ -631,21 +616,12 @@ fn controller(
             return;
         }
     };
-    log(if nemotron {
-        "Laddar nemotron-modellen…"
-    } else {
-        "Laddar whisper-modellen…"
-    });
+    log("Laddar whisper-modellen…");
     let t0 = std::time::Instant::now();
-    let loaded = if nemotron {
-        transcribe::Transcriber::new_nemotron(&model_path, &cfg.language)
-    } else {
-        transcribe::Transcriber::new_whisper(
-            model_path.to_str().expect("ogiltig modellsökväg"),
-            &cfg.language,
-        )
-    };
-    let mut transcriber = match loaded {
+    let mut transcriber = match transcribe::Transcriber::new(
+        model_path.to_str().expect("ogiltig modellsökväg"),
+        &cfg.language,
+    ) {
         Ok(t) => t,
         Err(e) => {
             fail(
@@ -958,26 +934,14 @@ fn warn_key_taken(key: &str) {
 
 /// Visar en Om-ruta med version, projektinfo och GitHub-länk.
 /// Körs i egen tråd så att meddelanderutan inte blockerar event-loopen.
-fn show_about(nemotron: bool) {
-    std::thread::spawn(move || {
-        let (engine, model) = if nemotron {
-            let engine = if cfg!(feature = "cuda") {
-                "ONNX Runtime (NVIDIA CUDA)"
-            } else if cfg!(feature = "directml") {
-                "ONNX Runtime (DirectML)"
-            } else {
-                "ONNX Runtime (CPU)"
-            };
-            (engine, "Nemotron 3.5 ASR (NVIDIA)")
+fn show_about() {
+    std::thread::spawn(|| {
+        let engine = if cfg!(feature = "cuda") {
+            "whisper.cpp (NVIDIA CUDA)"
+        } else if cfg!(feature = "vulkan") {
+            "whisper.cpp (Vulkan)"
         } else {
-            let engine = if cfg!(feature = "cuda") {
-                "whisper.cpp (NVIDIA CUDA)"
-            } else if cfg!(feature = "vulkan") {
-                "whisper.cpp (Vulkan)"
-            } else {
-                "whisper.cpp (CPU)"
-            };
-            (engine, "KB-Whisper (Kungliga biblioteket)")
+            "whisper.cpp (CPU)"
         };
         let text = format!(
             "T-Whisper v{VERSION}\n\
@@ -987,7 +951,7 @@ fn show_about(nemotron: bool) {
              in vid markören. Allt körs lokalt, inget skickas till molnet.\n\
              \n\
              Motor: {engine}\n\
-             Modell: {model}\n\
+             Modell: KB-Whisper (Kungliga biblioteket)\n\
              \n\
              Projekt och källkod:\n\
              {REPO_URL}"

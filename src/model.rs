@@ -1,21 +1,9 @@
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const MODEL_FILE: &str = "ggml-model-q5_0.bin";
 const VAD_MODEL_FILE: &str = "ggml-silero-v5.1.2.bin";
-
-/// ONNX-artefakterna som Nemotron-motorn behöver (parakeet-rs läser dem
-/// från en katalog). Färdigexporterade av parakeet-rs-projektet.
-const NEMOTRON_DIR: &str = "nemotron-3.5-asr-streaming-0.6b";
-const NEMOTRON_BASE_URL: &str =
-    "https://huggingface.co/altunenes/parakeet-rs/resolve/main/nemotron-3.5-asr-streaming-0.6b-onnx";
-const NEMOTRON_FILES: [&str; 4] = [
-    "encoder.onnx",
-    "encoder.onnx.data",
-    "decoder_joint.onnx",
-    "tokenizer.model",
-];
 
 /// Ser till att GGML-modellen finns lokalt; laddar annars ner den från Hugging Face.
 pub fn ensure_model(name: &str) -> Result<PathBuf> {
@@ -29,42 +17,15 @@ pub fn ensure_model(name: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)?;
 
     let url = format!("https://huggingface.co/KBLab/kb-whisper-{name}/resolve/main/{MODEL_FILE}");
-    download_file(&url, &path)?;
-    Ok(path)
-}
+    eprintln!("Laddar ner modell (första starten): {url}");
 
-/// Ser till att Nemotron-modellens ONNX-filer finns lokalt; laddar annars
-/// ner dem från Hugging Face. Returnerar katalogen med filerna.
-pub fn ensure_nemotron_model() -> Result<PathBuf> {
-    let dir = crate::config::config_dir().join("models").join(NEMOTRON_DIR);
-    std::fs::create_dir_all(&dir)?;
-    for file in NEMOTRON_FILES {
-        let path = dir.join(file);
-        if path.exists() {
-            continue;
-        }
-        let url = format!("{NEMOTRON_BASE_URL}/{file}");
-        download_file(&url, &path)?;
-    }
-    Ok(dir)
-}
-
-/// Laddar ner en fil till `path` via en .part-fil (avbruten nedladdning
-/// lämnar aldrig en halv fil på målplatsen). Loggar förlopp var 50:e MB.
-fn download_file(url: &str, path: &Path) -> Result<()> {
-    eprintln!("Laddar ner modellfil (första starten): {url}");
-
-    let mut resp = reqwest::blocking::get(url).context("nedladdningen misslyckades")?;
+    let mut resp = reqwest::blocking::get(&url).context("nedladdningen misslyckades")?;
     if !resp.status().is_success() {
         bail!("HTTP {} vid hämtning av {url}", resp.status());
     }
     let total_mb = resp.content_length().unwrap_or(0) >> 20;
 
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("ogiltigt filnamn")?;
-    let tmp = path.with_file_name(format!("{file_name}.part"));
+    let tmp = dir.join(format!("{MODEL_FILE}.part"));
     let mut out = std::fs::File::create(&tmp)?;
     let mut buf = [0u8; 1 << 16];
     let mut done: u64 = 0;
@@ -83,9 +44,9 @@ fn download_file(url: &str, path: &Path) -> Result<()> {
     }
     out.flush()?;
     drop(out);
-    std::fs::rename(&tmp, path)?;
-    eprintln!("Modellfil sparad: {}", path.display());
-    Ok(())
+    std::fs::rename(&tmp, &path)?;
+    eprintln!("Modell sparad: {}", path.display());
+    Ok(path)
 }
 
 /// Ser till att Silero-VAD-modellen (<1 MB) finns lokalt; laddar annars
