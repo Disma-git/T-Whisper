@@ -34,6 +34,18 @@ extern "system" {
     ) -> isize;
     fn GetLastError() -> u32;
     fn GetLocalTime(time: *mut SYSTEMTIME);
+    fn AttachConsole(process_id: u32) -> i32;
+    fn GetStdHandle(std_handle: u32) -> isize;
+    fn SetStdHandle(std_handle: u32, handle: isize) -> i32;
+    fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *const core::ffi::c_void,
+        creation: u32,
+        flags: u32,
+        template: isize,
+    ) -> isize;
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -81,6 +93,54 @@ fn now_string() -> String {
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
     )
+}
+
+/// Kopplar processen till konsolen den startades från, om det fanns en.
+///
+/// Release-bygget är ett GUI-program (`windows_subsystem = "windows"`) och
+/// får därför ingen konsol. Utan det här syns ingenting när man kör exe:n
+/// från en terminal — konsolhandtag ärvs inte, till skillnad från fil- och
+/// pipe-handtag. Startas appen från Startmenyn eller autostart finns ingen
+/// föräldrakonsol, och då gör funktionen ingenting.
+pub fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // -11
+    const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4; // -12
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    const OPEN_EXISTING: u32 = 3;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return; // Ingen föräldrakonsol (Startmenyn, autostart, tjänst).
+        }
+        // Bara handtag som saknas ersätts — annars skulle en omdirigering
+        // till fil eller pipe skrivas över och utdatan hamna fel.
+        for std_handle in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let existing = GetStdHandle(std_handle);
+            if existing != 0 && existing != INVALID_HANDLE_VALUE {
+                continue;
+            }
+            let name = wide("CONOUT$");
+            let handle = CreateFileW(
+                name.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                0,
+            );
+            if handle != INVALID_HANDLE_VALUE {
+                SetStdHandle(std_handle, handle);
+            }
+        }
+    }
+    // Skalets prompt har redan skrivits ut; en tom rad skiljer den från
+    // appens utmatning så att det inte ser ut som en enda rad.
+    eprintln!();
 }
 
 /// Installerar en panic-hook som skriver panicen till log.txt och visar en

@@ -68,6 +68,10 @@ enum UserEvent {
 }
 
 fn main() {
+    // Koppla till terminalens konsol om appen startades därifrån, så att
+    // loggraderna syns direkt. Måste ske före första utskriften.
+    winutil::attach_parent_console();
+
     // Först av allt: annars försvinner en tidig panic spårlöst.
     winutil::install_panic_hook();
 

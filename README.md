@@ -1,4 +1,4 @@
-# T-Whisper v0.5.2
+# T-Whisper v0.5.3
 
 [![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release&cacheSeconds=3600)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
@@ -105,6 +105,7 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 | Version | Datum | Nyheter |
 |---|---|---|
+| **0.5.3** | 2026-08-15 | Kör du exe:n från en terminal kopplas den nu till konsolen och visar sina loggrader där (`AttachConsole`) — tidigare syntes ingenting eftersom GUI-bygget saknar konsol; omdirigering till fil eller pipe respekteras fortfarande; tydligare modelltabell i konfigfilen som förklarar att modellvalet inte styr om GPU används |
 | **0.5.2** | 2026-08-15 | Panics loggas nu till `log.txt` med tråd, plats och backtrace och visar en felruta — tidigare stängdes programmet tyst utan spår (release-bygget har ingen konsol); nytt felsökningsavsnitt i README |
 | **0.5.1** | 2026-06-13 | Systemfältsikonen lyser röd hela tiden kontinuerligt läge är på (inte bara under tal), så att det syns tydligt att appen lyssnar |
 | **0.5.0** | 2026-06-13 | Kontinuerligt läge med röstaktivitetsdetektering (Silero-VAD): tryck F10 så lyssnar appen passivt och transkriberar automatiskt vid tal följt av paus; egen aktiveringsknapp valbar F1–F12 i menyn; VAD-modellen (<1 MB) laddas ner automatiskt vid första aktivering |
@@ -132,13 +133,15 @@ Sedan 0.5.2 loggas även panics — med tråd, plats, orsak och backtrace — oc
 
 Hittar du inget nytt i `log.txt` när appen försvinner rör det sig om en krasch under Rust-nivån (till exempel i GPU-drivrutinen), och den syns istället i Loggboken under **Windows-loggar → Program**, källa `Application Error`. Posten där namnger modulen som föll.
 
-Observera att release-binären är byggd som GUI-program (`windows_subsystem = "windows"`) och därför saknar konsol. Startar du den från ett terminalfönster syns alltså **ingen** utmatning där — prompten kommer bara tillbaka direkt. Loggfilen ovan är rätt väg. Behöver du ändå fånga stderr direkt går det via omdirigering till fil, eftersom filhandtag ärvs där konsolhandtag inte gör det:
+Sedan 0.5.3 kan du också köra binären från en terminal och se loggraderna live där:
 
 ```powershell
-Start-Process "$env:LOCALAPPDATA\Programs\T-Whisper\t-whisper.exe" -RedirectStandardError "$env:TEMP\t-whisper-stderr.txt"
+& "$env:LOCALAPPDATA\Programs\T-Whisper\t-whisper.exe"
 ```
 
-Utvecklar du på källkoden ger `cargo run` (debug-bygget) däremot en riktig konsol, eftersom `windows_subsystem` bara sätts i release.
+Appen är ett GUI-program och har ingen egen konsol, men kopplar sig vid start till terminalens konsol om den startades därifrån. Notera att prompten kommer tillbaka direkt — skalet väntar inte på appen, så utskrifterna trillar in medan du står vid prompten. Ctrl+C avslutar inte appen; använd Avsluta i systemfältsmenyn eller `taskkill /F /IM t-whisper.exe`.
+
+Startas appen från Startmenyn eller autostart finns ingen konsol att koppla till, och då är loggfilen enda kanalen.
 
 ## Kända begränsningar
 
