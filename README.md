@@ -99,7 +99,7 @@ sound_volume = 0.5     # volym för feedbackljuden, 0.0–1.0
 update_check = true    # kolla efter ny version på GitHub vid start
 ```
 
-Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-Whisper\models\`. Byt till `medium` eller `large` i konfigen för högre kvalitet — de hämtas också automatiskt.
+Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-Whisper\models\`. Byt till `medium` eller `large` i konfigen för högre kvalitet — de hämtas också automatiskt. Modellvalet påverkar inte om GPU används: är appen byggd med CUDA körs alla modeller på GPU, är den byggd för CPU körs alla på CPU. Med GPU är därför `large` oftast ett självklart val.
 
 ## Versionshistorik
 

@@ -131,14 +131,24 @@ hotkey = "{hotkey}"
 #  KB-Whisper-modell. Byter du modell laddas den ner automatiskt
 #  från Hugging Face vid nästa start och sparas i
 #  %APPDATA%\T-Whisper\models. Större modell = bättre kvalitet,
-#  men långsammare och mer minne:
+#  men långsammare och mer minne.
 #
-#    Modell    Nedladdning   Beskrivning
-#    tiny      ~30 MB        snabbast, enklast – korta kommandon
-#    base      ~60 MB        snabb, enkel diktering
-#    small     ~170 MB       rekommenderad balans (standard)
-#    medium    ~540 MB       bättre kvalitet, långsammare på CPU
-#    large     ~1.1 GB       bäst kvalitet, kräver kraftfull GPU
+#  OBS: modellvalet styr INTE om GPU används. Alla modeller körs på
+#  GPU om appen är byggd med CUDA (se "Motor" i Om-rutan) — även
+#  tiny. Är den byggd för CPU körs alla på CPU, även large.
+#  Tabellen nedan beskriver alltså storlek och kvalitet, inget annat.
+#
+#    Modell    Nedladdning   VRAM/RAM   Beskrivning
+#    tiny      ~30 MB        ~50 MB     snabbast, enklast – korta kommandon
+#    base      ~60 MB        ~100 MB    snabb, enkel diktering
+#    small     ~170 MB       ~250 MB    bra balans (standard)
+#    medium    ~540 MB       ~700 MB    bättre kvalitet
+#    large     ~1.1 GB       ~1.3 GB    bäst kvalitet
+#
+#  Med GPU är även large snabb och tar bara en bråkdel av VRAM:et på
+#  ett modernt kort — kör du CUDA finns sällan skäl att välja mindre.
+#  På CPU växer tiden ungefär med modellstorleken; där är small eller
+#  base oftast rimligast.
 model = "{model}"
 
 #  Talspråk (ISO-kod): "sv" = svenska, "en" = engelska, osv.
