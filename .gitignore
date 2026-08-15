@@ -4,3 +4,5 @@
 *.m4a
 *.wav
 *.mp3
+Thumbs.db
+installer/Output/

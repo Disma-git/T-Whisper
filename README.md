@@ -1,4 +1,4 @@
-# T-Whisper v0.5.1
+# T-Whisper v0.5.2
 
 [![Senaste release](https://img.shields.io/github/v/release/Disma-git/T-Whisper?label=release&cacheSeconds=3600)](https://github.com/Disma-git/T-Whisper/releases/latest)
 [![Licens: MIT](https://img.shields.io/badge/licens-MIT-blue.svg)](LICENSE)
@@ -105,6 +105,7 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 | Version | Datum | Nyheter |
 |---|---|---|
+| **0.5.2** | 2026-08-15 | Panics loggas nu till `log.txt` med tråd, plats och backtrace och visar en felruta — tidigare stängdes programmet tyst utan spår (release-bygget har ingen konsol); nytt felsökningsavsnitt i README |
 | **0.5.1** | 2026-06-13 | Systemfältsikonen lyser röd hela tiden kontinuerligt läge är på (inte bara under tal), så att det syns tydligt att appen lyssnar |
 | **0.5.0** | 2026-06-13 | Kontinuerligt läge med röstaktivitetsdetektering (Silero-VAD): tryck F10 så lyssnar appen passivt och transkriberar automatiskt vid tal följt av paus; egen aktiveringsknapp valbar F1–F12 i menyn; VAD-modellen (<1 MB) laddas ner automatiskt vid första aktivering |
 | **0.4.0** | 2026-06-12 | Mikrofonval i systemfältsmenyn (valet sparas; strömmen byggs om direkt); uppdateringskoll mot GitHub Releases — tyst vid start plus menyposten "Sök efter uppdateringar" |
@@ -116,7 +117,26 @@ Modellen (GGML q5, ~170 MB för small) laddas ner automatiskt till `%APPDATA%\T-
 
 ## Felsökning
 
-Appen loggar till `%APPDATA%\T-Whisper\log.txt` (roteras vid ~1 MB). Allvarliga fel vid start visas dessutom i en dialogruta. Startar du appen två gånger berättar den andra instansen att T-Whisper redan kör.
+Appen loggar till `%APPDATA%\T-Whisper\log.txt` (roteras vid ~1 MB; föregående logg sparas som `log.old.txt`). Allvarliga fel vid start visas dessutom i en dialogruta. Startar du appen två gånger berättar den andra instansen att T-Whisper redan kör.
+
+Läs de senaste raderna, eller följ loggen live medan du återskapar felet:
+
+```powershell
+Get-Content "$env:APPDATA\T-Whisper\log.txt" -Tail 50
+Get-Content "$env:APPDATA\T-Whisper\log.txt" -Wait -Tail 20
+```
+
+### Om programmet stängs oväntat
+
+Sedan 0.5.2 loggas även panics — med tråd, plats, orsak och backtrace — och en felruta visas med sökvägen till loggen. Tidigare försvann de spårlöst, eftersom release-bygget körs utan konsolfönster och därmed utan synlig stderr.
+
+Hittar du inget nytt i `log.txt` när appen försvinner rör det sig om en krasch under Rust-nivån (till exempel i GPU-drivrutinen), och den syns istället i Loggboken under **Windows-loggar → Program**, källa `Application Error`. Posten där namnger modulen som föll.
+
+Vill du se all utmatning direkt kan du köra binären från en terminal — då ärver den konsolen:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\T-Whisper\t-whisper.exe"
+```
 
 ## Kända begränsningar
 
