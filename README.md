@@ -132,11 +132,13 @@ Sedan 0.5.2 loggas även panics — med tråd, plats, orsak och backtrace — oc
 
 Hittar du inget nytt i `log.txt` när appen försvinner rör det sig om en krasch under Rust-nivån (till exempel i GPU-drivrutinen), och den syns istället i Loggboken under **Windows-loggar → Program**, källa `Application Error`. Posten där namnger modulen som föll.
 
-Vill du se all utmatning direkt kan du köra binären från en terminal — då ärver den konsolen:
+Observera att release-binären är byggd som GUI-program (`windows_subsystem = "windows"`) och därför saknar konsol. Startar du den från ett terminalfönster syns alltså **ingen** utmatning där — prompten kommer bara tillbaka direkt. Loggfilen ovan är rätt väg. Behöver du ändå fånga stderr direkt går det via omdirigering till fil, eftersom filhandtag ärvs där konsolhandtag inte gör det:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\T-Whisper\t-whisper.exe"
+Start-Process "$env:LOCALAPPDATA\Programs\T-Whisper\t-whisper.exe" -RedirectStandardError "$env:TEMP\t-whisper-stderr.txt"
 ```
+
+Utvecklar du på källkoden ger `cargo run` (debug-bygget) däremot en riktig konsol, eftersom `windows_subsystem` bara sätts i release.
 
 ## Kända begränsningar
 
